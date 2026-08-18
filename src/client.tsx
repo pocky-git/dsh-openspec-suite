@@ -1,9 +1,9 @@
 /**
  * dsh-openspec-suite 客户端部分。
  *
- * 1. 在左侧边栏工作区区域的头部，紧跟在“添加工作区”（+）按钮右侧，
- *    注入一个图标按钮（与侧栏“添加工作区”按钮同样的视觉风格，
- *    内联 IconListPenOutline16 SVG）。点击后打开 OpenSpec 总览页（见 2）。
+ * 1. 在左侧边栏根部，“新建会话”按钮与工作区浏览区域之间，
+ *    注入一个“图标 + 文字”按钮（宽模式下显示图标与 OpenSpec 文字，
+ *    窄/rail 模式下仅显示图标）。点击后打开 OpenSpec 总览页（见 2）。
  * 2. 总览页本身是左侧边栏内的一个二级页面：一个覆盖工作区浏览区域
  *    （区域标题 + 会话列表）的浮层，拥有自己的头部（“← 返回” + 标题）
  *    以及已导入项目的只读列表（含每个提案的进度）。项目的增删通过宿主
@@ -296,33 +296,30 @@ const HEADER_BTN_ID = 'openspec-suite-overview-btn'
 const PAGE_HOST_ID = 'openspec-suite-page-host'
 
 /**
- * 查找工作区区域头部的“添加工作区”图标按钮（一个圆角 28px/36px 图标按钮，
- * 内含 IconProjectAddOutline16 几何的 svg）。侧栏渲染出该按钮之前返回 null。
+ * 查找侧栏根部的“新建会话”按钮。注意：logo 行的品牌按钮 aria-label
+ * 也是“新建会话”，需排除——真正的“新建会话”按钮的父容器（侧栏根）
+ * 里同时存在“添加工作区”按钮，logo 行没有。
+ * 侧栏渲染出该按钮之前返回 null。
  */
-function findAddWorkspaceButton(): HTMLButtonElement | null {
-  const buttons = document.querySelectorAll('button')
-  for (const button of buttons) {
+function findNewSessionButton(): HTMLButtonElement | null {
+  for (const button of document.querySelectorAll('button')) {
     if (button.closest(`#${PAGE_HOST_ID}`) !== null) continue
-    const svg = button.querySelector('svg')
-    if (svg === null) continue
-    const path = svg.querySelectorAll('path')[1]
-    const d = path?.getAttribute('d') ?? ''
-    if (!d.startsWith('M4.76367 0C5.36861')) continue
-    // 必须看起来是圆形图标按钮（工作区头部样式）
-    const radius = window.getComputedStyle(button).borderRadius
-    const round = radius === '50%' || radius.endsWith('px') && parseFloat(radius) >= 10
-    if (!round) continue
-    // 不能在我们自己的页面浮层内
-    if (button.closest(`[data-openspec-suite-panel]`) !== null) continue
+    if (button.getAttribute('aria-label') !== '新建会话') continue
+    if (button.querySelector('svg') === null) continue
+    const parent = button.parentElement
+    if (parent === null || parent.querySelector('button[aria-label="添加工作区"]') === null) continue
     return button as HTMLButtonElement
   }
   return null
 }
 
-/** 按钮是否位于侧栏的工作区列表头部（而不是例如菜单传送门里）。 */
-function inWorkspaceHeader(button: HTMLButtonElement): boolean {
-  const svgSize = button.querySelector('svg')?.getAttribute('width') ?? ''
-  return svgSize === '16' || svgSize === '18'
+/** 收起态下位于侧栏外的“打开侧边栏”开关按钮。 */
+function findExpandToggle(): HTMLButtonElement | null {
+  for (const button of document.querySelectorAll('button')) {
+    if (button.getAttribute('aria-label') !== '打开侧边栏') continue
+    return button as HTMLButtonElement
+  }
+  return null
 }
 
 interface SidebarInjection {
@@ -370,12 +367,17 @@ function injectSidebar(): SidebarInjection {
     }
   }
 
-  /** 工作区浏览器根节点：持有区域标题的 flex 容器。 */
+  /** 工作区浏览器根节点：侧栏根容器内、包含“添加工作区”按钮的区域。 */
   const findBrowserRoot = (): HTMLElement | null => {
-    const target = findAddWorkspaceButton()
-    if (target === null) return null
-    const header = target.closest('div')
-    return header?.parentElement ?? null
+    const newSession = findNewSessionButton()
+    if (newSession === null) return null
+    const sidebarRoot = newSession.parentElement
+    if (sidebarRoot === null) return null
+    for (const child of sidebarRoot.children) {
+      if (child === newSession || !(child instanceof HTMLElement)) continue
+      if (child.querySelector('button[aria-label="添加工作区"]') !== null) return child
+    }
+    return null
   }
 
   const buildButton = (): HTMLButtonElement => {
@@ -385,9 +387,25 @@ function injectSidebar(): SidebarInjection {
     button.setAttribute('aria-label', 'OpenSpec 项目总览')
     button.className = 'oss-entry-btn'
     button.addEventListener('click', () => {
-      setSuiteState({ pageOpen: !suiteState.pageOpen })
+      // 收起态点击：先展开侧边栏，再打开总览页（总览页浮层依附于侧栏 DOM）。
+      if (findNewSessionButton()?.parentElement !== null
+        && (findNewSessionButton()?.parentElement?.getBoundingClientRect().width ?? 0) <= 120) {
+        findExpandToggle()?.click()
+      }
+      setSuiteState({ pageOpen: true })
     })
     return button
+  }
+
+  const renderContent = (button: HTMLButtonElement, wide: boolean, iconSize: number): void => {
+    button.textContent = ''
+    renderIcon(button, iconSize)
+    if (wide) {
+      const label = document.createElement('span')
+      label.className = 'oss-entry-label'
+      label.textContent = 'OpenSpec 项目总览'
+      button.appendChild(label)
+    }
   }
 
   const renderIcon = (button: HTMLButtonElement, size: number): void => {
@@ -409,19 +427,19 @@ function injectSidebar(): SidebarInjection {
 
   const mount = (): void => {
     if (disposed) return
-    const target = findAddWorkspaceButton()
-    if (target === null) return
-    if (!inWorkspaceHeader(target)) return
+    // 锚定在侧栏根容器里：“新建会话”按钮之后、工作区区域（regionArea）之前。
+    const newSession = findNewSessionButton()
+    if (newSession === null) return
+    const sidebarRoot = newSession.parentElement
+    if (sidebarRoot === null) return
 
-    // 添加按钮位于一个 max-width:60px/overflow:hidden 的动作簇里；
-    // 插在那里的兄弟节点会被静默裁剪。改为锚定在区域标题条（整宽）上，
-    // 作为其最后一个子节点追加，视觉上正好落在添加按钮右侧。
-    const cluster = target.parentElement
-    const anchor = cluster?.parentElement ?? cluster
-    if (anchor === null) return
-    if (buttonHost !== null && buttonHost.parentElement === anchor && buttonHost.isConnected) return
+    // 宽/窄（rail）模式判定：直接以侧栏根容器的渲染宽度为准。
+    // 展开约 280px；收起（rail）后收缩为图标列（远小于 120px）。
+    const sidebarWidth = sidebarRoot.getBoundingClientRect().width
+    sidebarWidthRef = sidebarWidth
+    const wide = sidebarWidth > 120
 
-    const wide = (target.querySelector('svg')?.getAttribute('width') ?? '16') !== '18'
+    const placed = buttonHost !== null && buttonHost.parentElement === sidebarRoot && buttonHost.isConnected
     if (buttonHost === null) {
       buttonHost = document.createElement('div')
       buttonHost.id = HEADER_BTN_ID
@@ -429,15 +447,23 @@ function injectSidebar(): SidebarInjection {
     }
     const button = buttonHost.querySelector('button') as HTMLButtonElement | null
     if (button === null) return
-    button.className = `oss-entry-btn ${wide ? 'is-wide' : 'is-narrow'}`
-    renderIcon(button, wide ? 16 : 18)
-    anchor.appendChild(buttonHost)
-    placedBeside = target
+    // 宿主 div 的模式随宽窄切换：宽模式是占满一行的行盒子；
+    // rail 模式收缩为自适应内容（按钮成为居中的图标方块）。
+    buttonHost.setAttribute('data-mode', wide ? 'wide' : 'rail')
+    buttonHost.style.display = ''
+    const nextClass = `oss-entry-btn ${wide ? 'is-wide' : 'is-narrow'}`
+    if (placed && button.className === nextClass && buttonHost.previousElementSibling === newSession) return
+    button.className = nextClass
+    renderContent(button, wide, wide ? 16 : 18)
+    if (!placed || buttonHost.previousElementSibling !== newSession) {
+      sidebarRoot.insertBefore(buttonHost, newSession.nextSibling)
+    }
+    placedBeside = newSession
 
-    // 确保浏览器根节点成为页面浮层的定位上下文
-    const root = anchor.parentElement ?? anchor
+    // 确保侧栏根节点成为页面浮层的定位上下文
+    const root = sidebarRoot
     if (getComputedStyle(root).position === 'static') root.style.position = 'relative'
-    // 页面浮层应当打开时重新依附
+    // 页面浮层应当在打开时重新依附
     if (suiteState.pageOpen && pageHost !== null && pageHost.parentElement !== root) root.appendChild(pageHost)
     syncPage()
   }
@@ -445,8 +471,31 @@ function injectSidebar(): SidebarInjection {
   const stateListener = (): void => { syncPage() }
   suiteListeners.add(stateListener)
 
-  observer = new MutationObserver(() => { mount() })
-  observer.observe(document.body, { childList: true, subtree: true })
+  // 收起/展开侧栏是类名与样式变化，不产生 childList 变更；
+  // 必须同时监听属性，并在过渡动画期间用 rAF 跟踪宽度直到稳定。
+  let rafHandle = 0
+  let sidebarWidthRef = 0
+  const scheduleMount = (): void => {
+    if (rafHandle !== 0) return
+    rafHandle = requestAnimationFrame(() => {
+      rafHandle = 0
+      mount()
+      // 过渡动画期间宽度持续变化，动画结束（宽度稳定）后再校准一次。
+      const prevWidth = sidebarWidthRef
+      const nextWidth = findNewSessionButton()?.parentElement?.getBoundingClientRect().width ?? prevWidth
+      if (Math.abs(nextWidth - prevWidth) > 0.5) {
+        rafHandle = requestAnimationFrame(() => { rafHandle = 0; mount() })
+      }
+    })
+  }
+
+  observer = new MutationObserver(() => { scheduleMount() })
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'style', 'hidden'],
+  })
   mount()
 
   return {
@@ -455,6 +504,7 @@ function injectSidebar(): SidebarInjection {
       suiteListeners.delete(stateListener)
       observer?.disconnect()
       observer = null
+      if (rafHandle !== 0) { cancelAnimationFrame(rafHandle); rafHandle = 0 }
       reactRoot?.unmount()
       reactRoot = null
       pageHost?.remove()

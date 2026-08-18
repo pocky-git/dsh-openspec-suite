@@ -225,19 +225,40 @@
   justify-content: space-between;
 }
 
-// ── 注入到侧栏头部入口按钮 ────────────────────────────────────────────────
+// ── 注入到侧栏（“新建会话”按钮与工作区区域之间）的入口按钮 ────────────────
+// 宽模式：与工作区列表的行一致（34px 高、8px 内边距、8px 圆角、
+// 14px/400 左对齐，占满一行；图标 16px 次要色）。
+// 收起（rail）模式：与新会话按钮同款图标按钮（38px、12px 圆角、
+// 居中、仅图标、0 2px 边距、下边距 8px）。
+
+// 外层宿主 div：宽模式占满一行；rail 模式收缩为自适应内容。
+#openspec-suite-overview-btn {
+  display: block;
+  width: 100%;
+  height: 34px;
+  margin: 0;
+  padding: 0 2px;
+  box-sizing: border-box;
+
+  &[data-mode='rail'] {
+    width: auto;
+    height: auto;
+    display: flex;
+    justify-content: center;
+    padding: 0;
+    margin: 0 2px 8px;
+  }
+}
 
 .oss-entry-btn {
   cursor: pointer;
-  flex: none;
-  justify-content: center;
+  display: flex;
   align-items: center;
   padding: 0;
-  display: inline-flex;
-  background: transparent;
   border: none;
-  border-radius: 50%;
+  background: transparent;
   outline: none;
+  box-sizing: border-box;
 
   &:hover,
   &:focus-visible {
@@ -245,14 +266,43 @@
   }
 
   &.is-wide {
-    width: 28px;
-    height: 28px;
-    color: var(--dsw-alias-label-secondary);
+    width: 100%;
+    height: 34px;
+    margin: 0;
+    padding: 0 8px;
+    border-radius: 8px;
+    gap: 6px;
+    justify-content: flex-start;
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--dsw-alias-label-primary);
+
+    svg {
+      color: var(--dsw-alias-label-secondary);
+    }
   }
 
   &.is-narrow {
+    display: inline-flex;
+    flex: none;
     width: 36px;
     height: 36px;
+    margin: 0;
+    border-radius: 50%;
+    justify-content: center;
     color: var(--dsw-alias-label-primary);
+
+    svg {
+      color: var(--dsw-alias-label-primary);
+    }
   }
+}
+
+.oss-entry-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
 }
