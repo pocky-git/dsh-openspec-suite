@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: set this to true or false
+  node-pty: true
+minimumReleaseAgeExclude:
+  - dsh-better-sidebar@0.12.3

@@ -1,0 +1,10 @@
+# dsh-openspec-suite bundle patch.
+#
+# Installed through the official CLI:
+#
+#   dsh plugin --profile <name> add dsh-openspec-suite
+#
+# This patch inserts ONLY this plugin's own row.
+- insert:
+    - id: openspec-suite
+      name: 'dsh-openspec-suite'
