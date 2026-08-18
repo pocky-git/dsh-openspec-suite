@@ -1,10 +1,10 @@
-# dsh-openspec-suite bundle patch.
+# dsh-openspec-suite 的 bundle patch。
 #
-# Installed through the official CLI:
+# 通过官方 CLI 安装：
 #
 #   dsh plugin --profile <name> add dsh-openspec-suite
 #
-# This patch inserts ONLY this plugin's own row.
+# 本 patch 只插入本插件自己的那一行。
 - insert:
     - id: openspec-suite
       name: 'dsh-openspec-suite'

@@ -1,8 +1,7 @@
 // 极简客户端打包器：esbuild 把 src/client.tsx 打成单个 IIFE（唯一的外部
 // 依赖是 `react`，保留为 require 调用）；less 把 src/client.less 编译成
 // CSS；然后本脚本把它们一起包进 DSH client-modules 服务在
-// /plugins/<id>/client.js 下发的 `window.__ModuleLoader__.load` 信封——
-// 与 dsh-better-sidebar 的 lib/client.js 相同的线上格式。
+// /plugins/<id>/client.js 下发的 `window.__ModuleLoader__.load` 信封。
 import { build } from 'esbuild'
 import less from 'less'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'

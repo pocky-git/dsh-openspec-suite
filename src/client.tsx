@@ -10,7 +10,7 @@
  *    的工作区管理进行；导入操作在别处完成。
  *
  * 通过同源的 `/openspec/api/*` JSON 信封（{ok, value} / {ok:false, error}）
- * 与宿主部分通信，和 better-sidebar 使用的信封一致。
+ * 与宿主部分通信。
  *
  * 样式统一放在 ./client.less，组件里只挂类名。
  */
@@ -385,7 +385,6 @@ function injectSidebar(): SidebarInjection {
     button.setAttribute('aria-label', 'OpenSpec 项目总览')
     button.className = 'oss-entry-btn'
     button.addEventListener('click', () => {
-      button.style.background = 'transparent'
       setSuiteState({ pageOpen: !suiteState.pageOpen })
     })
     return button

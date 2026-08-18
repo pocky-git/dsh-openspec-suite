@@ -1,8 +1,8 @@
 import { defineConfig } from 'tsdown'
 
-// Host half only: plain ESM, every runtime peer externalized (the profile's
-// node_modules provides them). The client half is bundled by
-// scripts/build-client.mjs into the ModuleLoader envelope.
+// 只构建宿主半：普通 ESM，所有运行时 peer 均 external（由 profile 的
+// node_modules 提供）。客户端半由 scripts/build-client.mjs 打成
+// ModuleLoader 信封。
 export default defineConfig({
   entry: ['src/index.ts'],
   outDir: 'lib',
@@ -15,7 +15,6 @@ export default defineConfig({
     '@deepseek-ai/dsh-session',
     '@deepseek-ai/dsh-host-directory-picker',
     '@deepseek-ai/cordis-plugin-loader',
-    'dsh-better-sidebar',
     'schemastery',
   ],
 })

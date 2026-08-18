@@ -1,44 +1,43 @@
 /**
- * dsh-openspec-suite host half.
+ * dsh-openspec-suite 宿主半。
  *
- * OpenSpec management API under `/openspec/api/*` (same trust fence shape
- * as the better-sidebar routes): folder scanning, workspace import,
- * per-project proposal progress.
+ * 挂在 `/openspec/api/*` 下的 OpenSpec 管理 API（仅限 loopback 的信任
+ * 栅栏）：文件夹扫描、工作区导入、按项目统计提案进度。
  */
 
 import { basename, join } from 'node:path'
 import { promises as fsp } from 'node:fs'
 import type { Context } from './context-types.ts'
 
-/** Plugin identity for cordis.yml rows. */
+/** 插件标识，用于 cordis.yml 的行。 */
 export const name = 'dsh-openspec-suite'
 
-/** Services required before mounting. */
+/** 挂载前需要的服务。 */
 export const inject = ['webServer', 'sessions', 'workspaceRegistry']
 
-/** Trust fence: loopback browser origins only, mirroring the sidebar's fence. */
+/** 信任栅栏：只允许 loopback 浏览器来源。 */
 function isTrustedApiRequest(hostHeader: string | undefined): boolean {
   if (hostHeader === undefined) return false
   const hostname = hostHeader.split(':')[0]!.toLowerCase()
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
 }
 
-// ── OpenSpec discovery ─────────────────────────────────────────────────────
+// ── OpenSpec 项目发现 ───────────────────────────────────────────────────────
 
-/** One detected OpenSpec project. */
+/** 一个被探测到的 OpenSpec 项目。 */
 export interface OpenSpecProject {
-  /** Project root (absolute path). */
+  /** 项目根目录（绝对路径）。 */
   path: string
-  /** Directory basename. */
+  /** 目录名。 */
   name: string
-  /** Whether the root itself is the openspec project (vs nested deeper). */
+  /** 根目录本身是否就是 openspec 项目（而非更深层嵌套的）。 */
   root: boolean
 }
 
 const MAX_SCAN_DEPTH = 4
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.venv', 'venv', '__pycache__', 'target', 'openspec'])
 
-/** Whether `dir` contains an `openspec/` directory with a `changes/` child. */
+/** 判断 `dir` 是否含有带 `changes/` 子目录的 `openspec/` 目录。 */
 async function isOpenspecProject(dir: string): Promise<boolean> {
   try {
     const stat = await fsp.stat(join(dir, 'openspec', 'changes'))
@@ -49,10 +48,10 @@ async function isOpenspecProject(dir: string): Promise<boolean> {
 }
 
 /**
- * Enumerate candidate directories under `rootDir` up to `maxDepth` levels.
- * Uses recursive readdir (returns names only) and re-checks each candidate
- * with stat(), so Dirent type fields (which have proven unreliable inside the
- * Electron host for `entry.isDirectory()`) are never trusted.
+ * 枚举 `rootDir` 下最多 `maxDepth` 层的候选目录。
+ * 使用递归 readdir（只返回名字）再对每个候选用 stat() 复核，
+ * 因此从不信任 Dirent 的类型字段（在 Electron 宿主里
+ * `entry.isDirectory()` 已被证明不可靠）。
  */
 async function listSubdirectories(rootDir: string, maxDepth: number, signal?: AbortSignal): Promise<string[]> {
   const results: string[] = []
@@ -86,8 +85,8 @@ async function listSubdirectories(rootDir: string, maxDepth: number, signal?: Ab
 }
 
 /**
- * Scan `rootDir` (itself included) up to `maxDepth` levels for directories
- * containing `openspec/changes/`.
+ * 扫描 `rootDir`（含其自身）最多 `maxDepth` 层，找出所有包含
+ * `openspec/changes/` 的目录。
  */
 export async function scanOpenspecProjects(rootDir: string, signal?: AbortSignal, maxDepth = MAX_SCAN_DEPTH): Promise<OpenSpecProject[]> {
   const found: OpenSpecProject[] = []
@@ -103,18 +102,18 @@ export async function scanOpenspecProjects(rootDir: string, signal?: AbortSignal
   return found
 }
 
-// ── Proposal progress ──────────────────────────────────────────────────────
+// ── 提案进度 ────────────────────────────────────────────────────────────────
 
-/** One change proposal with its artifact/task progress. */
+/** 一个变更提案及其产物/任务进度。 */
 export interface OpenSpecChange {
   name: string
-  /** Artifacts present: proposal / design / specs / tasks. */
+  /** 已存在的产物：proposal / design / specs / tasks。 */
   artifacts: { proposal: boolean; design: boolean; specs: boolean; tasks: boolean }
-  /** Checked / total checkboxes in tasks.md (0/0 when absent). */
+  /** tasks.md 中已勾选 / 总复选框数（文件缺失时为 0/0）。 */
   tasks: { done: number; total: number }
 }
 
-/** Parse tasks.md checkbox progress. */
+/** 解析 tasks.md 的复选框进度。 */
 function parseTasks(content: string): { done: number; total: number } {
   let done = 0
   let total = 0
@@ -125,7 +124,7 @@ function parseTasks(content: string): { done: number; total: number } {
   return { done, total }
 }
 
-/** Read one change directory into a progress summary. */
+/** 读取一个 change 目录并汇总为进度摘要。 */
 async function readChange(changeDir: string, changeName: string, signal?: AbortSignal): Promise<OpenSpecChange | null> {
   const artifacts = { proposal: false, design: false, specs: false, tasks: false }
   let tasksProgress = { done: 0, total: 0 }
@@ -139,7 +138,7 @@ async function readChange(changeDir: string, changeName: string, signal?: AbortS
         artifacts.tasks = true
         try {
           tasksProgress = parseTasks(await fsp.readFile(join(changeDir, 'tasks.md'), 'utf8'))
-        } catch { /* unreadable tasks.md still counts as present */ }
+        } catch { /* tasks.md 读不出来仍视为已存在 */ }
       } else if (entry.name === 'specs' && entry.isDirectory()) {
         const specFiles = await fsp.readdir(join(changeDir, 'specs'), { withFileTypes: true })
         artifacts.specs = specFiles.some((candidate) => candidate.isFile() && candidate.name.endsWith('.md'))
@@ -151,7 +150,7 @@ async function readChange(changeDir: string, changeName: string, signal?: AbortS
   return { name: changeName, artifacts, tasks: tasksProgress }
 }
 
-/** Summarize every active (non-archived) change of one openspec project. */
+/** 汇总一个 openspec 项目的所有活跃（未归档）change。 */
 export async function readProjectChanges(projectDir: string, signal?: AbortSignal): Promise<OpenSpecChange[]> {
   const changesDir = join(projectDir, 'openspec', 'changes')
   let entries
@@ -170,7 +169,7 @@ export async function readProjectChanges(projectDir: string, signal?: AbortSigna
   return changes
 }
 
-// ── Settings ───────────────────────────────────────────────────────────────
+// ── 设置 ────────────────────────────────────────────────────────────────────
 
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from 'schemastery'
@@ -178,9 +177,9 @@ import z from 'schemastery'
 const PREFS_NS = settingsNamespace('dsh-openspec-suite')
 
 const PrefsSchema = z.object({
-  /** Imported project roots (absolute paths), in import order. */
+  /** 已导入的项目根目录（绝对路径），按导入顺序。 */
   projects: z.array(z.string()).default([]),
-  /** Last scan root, pre-filled in the import view. */
+  /** 最近一次扫描的根目录，用于在导入视图中预填。 */
   lastScanRoot: z.string().default(''),
 })
 
@@ -189,7 +188,7 @@ interface Prefs {
   lastScanRoot: string
 }
 
-// ── Wire helpers ───────────────────────────────────────────────────────────
+// ── 传输层辅助 ──────────────────────────────────────────────────────────────
 
 function writeJson(res: unknown, status: number, body: unknown): void {
   const r = res as { setHeader(k: string, v: string): void; statusCode: number; end(body: string): void }
@@ -211,7 +210,7 @@ interface WireRequest {
   body?: unknown
 }
 
-/** Parse the JSON body of one request, size-capped. */
+/** 解析单个请求的 JSON body，带大小上限。 */
 async function readJsonBody(req: WireRequest): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = []
   let size = 0
@@ -225,7 +224,7 @@ async function readJsonBody(req: WireRequest): Promise<Record<string, unknown>> 
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
 }
 
-// ── Plugin ─────────────────────────────────────────────────────────────────
+// ── 插件 ────────────────────────────────────────────────────────────────────
 
 export interface Config { scanDepth?: number }
 
@@ -269,7 +268,7 @@ export function apply(ctx: Context, config: Config): void {
           const body = await readJsonBody(req)
           switch (method) {
             case 'dir.list': {
-              // browse-capability directory listing for the import picker
+              // 供导入选择器使用的、支持浏览能力的目录列表
               const path = typeof body.path === 'string' && body.path !== '' ? body.path : undefined
               const picker = ctx.get('directoryPicker')
               const capability = picker?.capability()
@@ -288,9 +287,8 @@ export function apply(ctx: Context, config: Config): void {
               return
             }
             case 'pick': {
-              // one-shot OS folder chooser through the host directoryPicker
-              // seam; browse-only hosts answer 501 and the client falls back
-              // to its in-app directory browser.
+              // 通过宿主 directoryPicker 接缝做一次性的系统文件夹选择；
+              // 仅支持浏览的宿主返回 501，客户端降级为应用内目录浏览器。
               const picker = ctx.get('directoryPicker')
               const capability = picker?.capability()
               if (picker === undefined || capability === undefined) {
@@ -301,15 +299,15 @@ export function apply(ctx: Context, config: Config): void {
                 writeError(res, 'pick-unsupported', 'host picker is browse-only; use the in-app browser', 501)
                 return
               }
-              // IncomingMessage exposes no abort signal for a fully-read body,
-              // so the chooser runs on its own lifetime; a client navigating
-              // away simply ignores the answered pick.
+              // IncomingMessage 在 body 读完后不提供 abort signal，
+              // 所以选择器按自己的生命周期运行；客户端导航离开时
+              // 直接忽略返回的拾取结果即可。
               const path = await capability.pick(new AbortController().signal)
               writeOk(res, { path: path ?? null })
               return
             }
             case 'diag': {
-              // temporary diagnostics: why does a parent scan find nothing?
+              // 临时诊断接口：为什么父目录扫描什么都找不到？
               const dir = requireString(body, 'path')
               const report: Record<string, unknown> = { dir }
               try {
@@ -326,7 +324,7 @@ export function apply(ctx: Context, config: Config): void {
                   isDirectory: entry.isDirectory(),
                   isSymbolicLink: entry.isSymbolicLink(),
                 }))
-                // probe one named child (or the first scannable dir) exactly as the scan would
+                // 按扫描的同样方式探测一个指定名字的子目录（或第一个可扫描目录）
                 const wanted = typeof body.probeName === 'string' && body.probeName !== '' ? body.probeName : undefined
                 const probe = entries.find((entry) => entry.isDirectory() && !SKIP_DIRS.has(entry.name) && (wanted === undefined || entry.name === wanted))
                 if (probe !== undefined) {
@@ -342,7 +340,7 @@ export function apply(ctx: Context, config: Config): void {
               } catch (error) {
                 report.readdirError = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error)
               }
-              // re-run the exact scan path and trace what it does
+              // 重新运行一遍完全相同的扫描路径并追踪其行为
               try {
                 const subdirs = await listSubdirectories(dir, MAX_SCAN_DEPTH)
                 report.subdirCount = subdirs.length
@@ -359,9 +357,9 @@ export function apply(ctx: Context, config: Config): void {
               return
             }
             case 'scanAndImportAll': {
-              // scan the picked root (recursively) and import EVERY openspec
-              // project found beneath it — the picked folder itself does not
-              // need to be a project.
+              // （递归）扫描选定的根目录并导入其下的所有 openspec
+              // 项目——选定的文件夹本身不
+              // 需要是项目。
               const rootDir = requireString(body, 'path')
               const rootStat = await fsp.stat(rootDir).catch(() => undefined)
               if (rootStat === undefined || !rootStat.isDirectory()) {
@@ -393,8 +391,8 @@ export function apply(ctx: Context, config: Config): void {
               const rootDir = requireString(body, 'path')
               const projects = await scanOpenspecProjects(rootDir)
               await updatePrefs({ ...readPrefs(), lastScanRoot: rootDir })
-              // attach diagnostics when nothing is found, so "why is my
-              // project not detected" is answerable from the wire
+              // 找不到项目时附带诊断信息，让"为什么没探测到我的
+              // 项目"可以直接从传输层回答
               let diag: Record<string, unknown> | undefined
               if (projects.length === 0) {
                 diag = { node: process.version }
@@ -429,9 +427,9 @@ export function apply(ctx: Context, config: Config): void {
             }
             case 'remove': {
               const rootDir = requireString(body, 'path')
-              // Remove from BOTH the prefs index and the workspace registry, so
-              // deleting a project here also drops it from the sidebar (and
-              // vice versa is handled by overview's reconciliation).
+              // 同时从偏好索引和工作区注册表中移除，这样在这里
+              // 删除项目也会把它从侧边栏去掉（反向同步由 overview
+              // 的对账逻辑处理）。
               const prefs = readPrefs()
               await updatePrefs({ ...prefs, projects: prefs.projects.filter((p) => p !== rootDir) })
               const ws = ctx.workspaceRegistry.list().find((w) => w.path === rootDir)
@@ -440,9 +438,8 @@ export function apply(ctx: Context, config: Config): void {
               return
             }
             case 'overview': {
-              // Authoritative source = the workspace registry, so OpenSpec
-              // projects and the sidebar workspaces stay in lockstep: a
-              // workspace added/removed from either side is reflected here.
+              // 权威数据源 = 工作区注册表，让 OpenSpec 项目和侧边栏
+              // 工作区保持一致：任一侧增删的工作区都会在这里反映。
               const workspaces = ctx.workspaceRegistry.list()
               const all = await Promise.all(workspaces.map(async (ws) => ({
                 ws,
@@ -457,8 +454,8 @@ export function apply(ctx: Context, config: Config): void {
                   stillValid: entry.isOpenspec,
                   changes: entry.changes,
                 }))
-              // Reconcile prefs to a faithful cache of registry paths, so a
-              // workspace deleted from the sidebar side disappears here too.
+              // 把偏好对账成注册表路径的忠实缓存，这样从侧边栏一侧
+              // 删除的工作区在这里也会消失。
               const registryPaths = new Set(workspaces.map((ws) => ws.path))
               const prefs = readPrefs()
               const reconciled = prefs.projects.filter((p) => registryPaths.has(p))
