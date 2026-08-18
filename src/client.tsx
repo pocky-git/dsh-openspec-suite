@@ -5,14 +5,13 @@
  *    button, inline IconListPenOutline16 SVG) is injected into the left
  *    sidebar workspace section header, immediately to the right of the
  *    add-workspace (+) button. Clicking it opens the OpenSpec overview
- *    page (see 2) and starts the import flow: a folder picker — the
- *    host's OS-native chooser when available, otherwise the in-app
- *    browse dialog — then automatic scan+import of EVERY openspec/
- *    project found in the chosen subtree.
+ *    page (see 2).
  * 2. The overview itself is a SECOND-LEVEL PAGE inside the left sidebar:
  *    an overlay covering the workspace browser area (section header +
  *    session list) with its own header ("← 返回" + title) and the
- *    per-project proposal progress list.
+ *    read-only list of imported projects with their per-proposal
+ *    progress. Projects are added/removed through the host's workspace
+ *    management; importing happens elsewhere.
  *
  * Talks to the host half through the same-origin `/openspec/api/*` JSON
  * envelope ({ok, value} / {ok:false, error}) the better-sidebar uses.
@@ -38,19 +37,19 @@ interface ProjectWire {
   changes: OpenSpecChangeWire[]
 }
 
-interface ScanProjectWire {
-  path: string
-  name: string
-  root: boolean
-}
-
 interface ImportAllResult {
   root: string
   count: number
   imported: string[]
   existing: string[]
   failed: Array<{ path: string; message: string }>
-  projects: ScanProjectWire[]
+}
+
+interface PickerState {
+  open: boolean
+  path: string
+  entries: Array<{ name: string; path: string }>
+  error: string
 }
 
 async function call<T>(method: string, payload: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
@@ -104,17 +103,13 @@ function IconChevronLeftOutline14(props: { size?: number }): React.ReactElement 
 // ── shared module state (the header button and the page both drive it) ──────
 
 interface SuiteState {
-  /** Result of the last pick-and-import run, shown in the overview page. */
-  lastImport: ImportAllResult | null
   /** Bump to make the overview page reload its project list. */
   reloadToken: number
-  /** Open the fallback browse dialog (set by the entry button, consumed by the page). */
-  browseRequest: number
   /** Whether the second-level page is shown. */
   pageOpen: boolean
 }
 
-let suiteState: SuiteState = { lastImport: null, reloadToken: 0, browseRequest: 0, pageOpen: false }
+let suiteState: SuiteState = { reloadToken: 0, pageOpen: false }
 const suiteListeners = new Set<() => void>()
 
 function setSuiteState(patch: Partial<SuiteState>): void {
@@ -165,16 +160,7 @@ function styles(): Record<string, React.CSSProperties> {
     bar: { height: 4, borderRadius: 2, background: 'rgba(128,128,128,.25)', overflow: 'hidden', flex: 1 },
     fill: { height: '100%', borderRadius: 2, background: 'var(--dsw-alias-state-business-primary, #4d6bfe)' },
     err: { color: 'var(--dsw-alias-state-error-primary, #e5484d)', fontSize: 12, whiteSpace: 'pre-wrap' },
-    scanRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', border: '1px solid rgba(128,128,128,.25)', borderRadius: 6, fontSize: 12.5 },
-    input: { flex: 1, minWidth: 0, padding: '5px 8px', borderRadius: 6, border: '1px solid rgba(128,128,128,.35)', background: 'transparent', color: 'inherit', fontSize: 12 },
   }
-}
-
-interface PickerState {
-  open: boolean
-  path: string
-  entries: Array<{ name: string; path: string }>
-  error: string
 }
 
 function OverviewPage(props: { onBack: () => void }): React.ReactElement {
@@ -183,7 +169,6 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
   const [projects, setProjects] = React.useState<ProjectWire[] | null>(null)
   const [error, setError] = React.useState('')
   const [busy, setBusy] = React.useState(false)
-  const [picker, setPicker] = React.useState<PickerState>({ open: false, path: '', entries: [], error: '' })
 
   const reload = React.useCallback((signal?: AbortSignal) => {
     call<{ projects: ProjectWire[] }>('overview', {}, signal)
@@ -197,23 +182,22 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
     return () => controller.abort()
   }, [suite.reloadToken, reload])
 
-  // The entry button requests the fallback browse dialog when the host has
-  // no OS chooser: honor NEW requests only.
-  const seenBrowseRequest = React.useRef(suite.browseRequest)
-  React.useEffect(() => {
-    if (suite.browseRequest === seenBrowseRequest.current) return
-    seenBrowseRequest.current = suite.browseRequest
-    setPicker({ open: true, path: '', entries: [], error: '' })
-    call<{ path: string; entries: Array<{ name: string; path: string }> }>('dir.list', {})
-      .then((listing) => setPicker({ open: true, path: listing.path, entries: listing.entries, error: '' }))
-      .catch((err) => setPicker({ open: false, path: '', entries: [], error: `目录浏览不可用（${String((err as Error).message ?? err)}）` }))
-  }, [suite.browseRequest])
+  const doRemove = async (dir: string): Promise<void> => {
+    setBusy(true); setError('')
+    try { await call('remove', { path: dir }); reload() }
+    catch (err) { setError(String((err as Error).message ?? err)) }
+    finally { setBusy(false) }
+  }
+
+  // ── ＋ import flow (folder pick → scan + import all beneath it) ──
+
+  const [picker, setPicker] = React.useState<PickerState>({ open: false, path: '', entries: [], error: '' })
 
   const importAllUnder = async (dir: string): Promise<void> => {
     setBusy(true); setError('')
     try {
       const result = await call<ImportAllResult>('scanAndImportAll', { path: dir })
-      setSuiteState({ lastImport: result, reloadToken: suiteState.reloadToken + 1 })
+      setSuiteState({ reloadToken: suiteState.reloadToken + 1 })
       setPicker((p) => ({ ...p, open: false }))
       if (result.count === 0) setError('所选文件夹内没有发现 OpenSpec 项目（需包含 openspec/changes 目录）')
     } catch (err) { setError(String((err as Error).message ?? err)) }
@@ -227,6 +211,7 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
     } catch (err) {
       const code = (err as { code?: string }).code
       if (code === 'picker-unavailable' || code === 'pick-unsupported') {
+        // browse-only host: open the in-app directory browser fallback
         setPicker({ open: true, path: '', entries: [], error: '' })
         try {
           const listing = await call<{ path: string; entries: Array<{ name: string; path: string }> }>('dir.list', {})
@@ -236,13 +221,6 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
       }
       setError(String((err as Error).message ?? err))
     }
-  }
-
-  const doRemove = async (dir: string): Promise<void> => {
-    setBusy(true); setError('')
-    try { await call('remove', { path: dir }); reload() }
-    catch (err) { setError(String((err as Error).message ?? err)) }
-    finally { setBusy(false) }
   }
 
   const browseTo = async (dir: string): Promise<void> => {
@@ -270,10 +248,6 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
       }, e('span', { style: { fontSize: 14, lineHeight: '14px' } }, '＋')),
     ),
     e('div', { style: s.pageBody },
-      e('div', { style: s.row },
-        e('button', { style: s.btnPrimary, disabled: busy, onClick: () => void startImport() }, busy ? '处理中…' : '📂 选择文件夹导入'),
-        e('span', { style: s.muted }, '自动导入所选目录下所有 OpenSpec 项目'),
-      ),
       picker.error !== '' && e('div', { style: s.err }, picker.error),
       picker.open && e('div', { style: { ...s.card, maxHeight: 260, overflow: 'auto' } },
         e('div', { style: s.row },
@@ -285,7 +259,7 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
           .filter((entry) => !entry.name.startsWith('.'))
           .map((entry) => e('div', {
             key: entry.path,
-            style: { ...s.scanRow, cursor: 'pointer', border: 'none', padding: '3px 6px' },
+            style: { cursor: 'pointer', padding: '3px 6px', borderRadius: 4, fontSize: 12.5 },
             onClick: () => void browseTo(entry.path),
             onMouseEnter: (ev: React.MouseEvent<HTMLDivElement>) => { ev.currentTarget.style.background = 'rgba(128,128,128,.15)' },
             onMouseLeave: (ev: React.MouseEvent<HTMLDivElement>) => { ev.currentTarget.style.background = 'transparent' },
@@ -295,27 +269,11 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
           e('button', { style: s.btn, onClick: () => setPicker((p) => ({ ...p, open: false })) }, '取消'),
         ),
       ),
-      suite.lastImport !== null && e('div', { style: { ...s.card, gap: 8 } },
-        e('div', { style: s.h }, `在 ${suite.lastImport.root} 发现 ${suite.lastImport.count} 个 OpenSpec 项目`),
-        e('div', { style: s.muted },
-          `新导入 ${suite.lastImport.imported.length} · 已存在 ${suite.lastImport.existing.length}` +
-          (suite.lastImport.failed.length > 0 ? ` · 失败 ${suite.lastImport.failed.length}` : '')),
-        suite.lastImport.projects.map((project) => e('div', { key: project.path, style: s.scanRow },
-          e('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' } },
-            `📦 ${project.name}`,
-            suite.lastImport!.failed.some((f) => f.path === project.path) ? '（导入失败）'
-              : suite.lastImport!.existing.includes(project.path) ? '（已在工作区）'
-                : suite.lastImport!.imported.includes(project.path) ? ' ✓' : ''),
-        )),
-        suite.lastImport.failed.length > 0 && e('div', { style: s.err },
-          suite.lastImport.failed.map((f) => `${f.path}: ${f.message}`).join('\n')),
-      ),
       error !== '' && e('div', { style: s.err }, error),
       projects === null
         ? e('div', { style: s.muted }, '加载中…')
         : e('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-          e('div', { style: s.h }, `已导入项目（${projects.length}）`),
-          projects.length === 0 && e('div', { style: s.muted }, '还没有导入项目。点击上方按钮选择文件夹，自动发现并导入其中的 OpenSpec 项目。'),
+          projects.length === 0 && e('div', { style: s.muted }, '还没有导入项目。'),
           projects.map((project) => {
             const totalTasks = project.changes.reduce((sum, change) => sum + change.tasks.total, 0)
             const doneTasks = project.changes.reduce((sum, change) => sum + change.tasks.done, 0)
