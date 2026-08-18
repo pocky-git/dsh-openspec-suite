@@ -1,28 +1,27 @@
 /**
- * dsh-openspec-suite client half.
+ * dsh-openspec-suite 客户端部分。
  *
- * 1. An icon button (same visual style as the sidebar's "add workspace"
- *    button, inline IconListPenOutline16 SVG) is injected into the left
- *    sidebar workspace section header, immediately to the right of the
- *    add-workspace (+) button. Clicking it opens the OpenSpec overview
- *    page (see 2).
- * 2. The overview itself is a SECOND-LEVEL PAGE inside the left sidebar:
- *    an overlay covering the workspace browser area (section header +
- *    session list) with its own header ("← 返回" + title) and the
- *    read-only list of imported projects with their per-proposal
- *    progress. Projects are added/removed through the host's workspace
- *    management; importing happens elsewhere.
+ * 1. 在左侧边栏工作区区域的头部，紧跟在“添加工作区”（+）按钮右侧，
+ *    注入一个图标按钮（与侧栏“添加工作区”按钮同样的视觉风格，
+ *    内联 IconListPenOutline16 SVG）。点击后打开 OpenSpec 总览页（见 2）。
+ * 2. 总览页本身是左侧边栏内的一个二级页面：一个覆盖工作区浏览区域
+ *    （区域标题 + 会话列表）的浮层，拥有自己的头部（“← 返回” + 标题）
+ *    以及已导入项目的只读列表（含每个提案的进度）。项目的增删通过宿主
+ *    的工作区管理进行；导入操作在别处完成。
  *
- * Talks to the host half through the same-origin `/openspec/api/*` JSON
- * envelope ({ok, value} / {ok:false, error}) the better-sidebar uses.
+ * 通过同源的 `/openspec/api/*` JSON 信封（{ok, value} / {ok:false, error}）
+ * 与宿主部分通信，和 better-sidebar 使用的信封一致。
+ *
+ * 样式统一放在 ./client.less，组件里只挂类名。
  */
 
-/** Plugin identity. */
+/** 插件标识。 */
 export const name = 'dsh-openspec-suite/client'
 
 import * as React from 'react'
 import * as ReactDOMClient from 'react-dom/client'
 import type { Context } from './client-context.ts'
+import './client.less'
 
 interface OpenSpecChangeWire {
   name: string
@@ -52,6 +51,7 @@ interface PickerState {
   error: string
 }
 
+/** 调用宿主侧 `/openspec/api/*` 接口的统一封装。 */
 async function call<T>(method: string, payload: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/openspec/api/${method}`, {
     method: 'POST',
@@ -68,10 +68,8 @@ async function call<T>(method: string, payload: Record<string, unknown> = {}, si
   return parsed.value as T
 }
 
-const e = React.createElement
-
-// ── icons (geometry lifted from @deepseek-ai/dsh-client-ui-primitives so the
-// button reads as native UI; currentColor follows the theme) ───────────────
+// ── 图标（几何数据取自 @deepseek-ai/dsh-client-ui-primitives，让按钮看起来
+//    像原生 UI；currentColor 跟随主题） ────────────────────────────────────
 
 const ICON_LIST_PEN_PATHS = [
   'M10.8239 3.54733V4.78443H4.63437V3.54733H10.8239Z',
@@ -82,41 +80,45 @@ const ICON_LIST_PEN_PATHS = [
   'M8.24493 13.3711L7.49015 14.8806C7.40148 15.058 7.58961 15.2461 7.76695 15.1574L9.27651 14.4027L14.6147 9.09934L13.5832 8.06775L8.24493 13.3711Z',
 ]
 
+/** 列表-笔 图标（16px 线性风格）。 */
 function IconListPenOutline16(props: { size?: number }): React.ReactElement {
   const size = props.size ?? 16
-  return e('svg', {
-    width: size, height: size, viewBox: '0 0 16 16', fill: 'none', xmlns: 'http://www.w3.org/2000/svg',
-    style: { display: 'block', flex: 'none' },
-  }, ICON_LIST_PEN_PATHS.map((d, index) => e('path', { key: index, d, fill: 'currentColor' })))
-}
-
-function IconChevronLeftOutline14(props: { size?: number }): React.ReactElement {
-  const size = props.size ?? 14
-  return e('svg', {
-    width: size, height: size, viewBox: '0 0 14 14', fill: 'none', xmlns: 'http://www.w3.org/2000/svg',
-    style: { display: 'block', flex: 'none' },
-  },
-    e('path', { d: 'M8.87467 3.40786C9.08815 3.62133 9.08815 3.96753 8.87467 4.18101L6.05568 7L8.87467 9.81899C9.08815 10.0325 9.08815 10.3787 8.87467 10.5921C8.6612 10.8056 8.315 10.8056 8.10152 10.5921L4.87533 7.36594C4.66186 7.15247 4.66186 6.80626 4.87533 6.59279L8.10152 3.3666C8.315 3.15312 8.6612 3.15312 8.87467 3.3666Z', fill: 'currentColor' }),
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'block', flex: 'none' }}>
+      {ICON_LIST_PEN_PATHS.map((d, index) => <path key={index} d={d} fill="currentColor" />)}
+    </svg>
   )
 }
 
-// ── shared module state (the header button and the page both drive it) ──────
+/** 左箭头（返回）图标（14px 线性风格）。 */
+function IconChevronLeftOutline14(props: { size?: number }): React.ReactElement {
+  const size = props.size ?? 14
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'block', flex: 'none' }}>
+      <path d="M8.87467 3.40786C9.08815 3.62133 9.08815 3.96753 8.87467 4.18101L6.05568 7L8.87467 9.81899C9.08815 10.0325 9.08815 10.3787 8.87467 10.5921C8.6612 10.8056 8.315 10.8056 8.10152 10.5921L4.87533 7.36594C4.66186 7.15247 4.66186 6.80626 4.87533 6.59279L8.10152 3.3666C8.315 3.15312 8.6612 3.15312 8.87467 3.3666Z" fill="currentColor" />
+    </svg>
+  )
+}
+
+// ── 模块级共享状态（头部按钮与总览页共同驱动） ─────────────────────────────
 
 interface SuiteState {
-  /** Bump to make the overview page reload its project list. */
+  /** 递增以让总览页重新加载项目列表。 */
   reloadToken: number
-  /** Whether the second-level page is shown. */
+  /** 二级页面当前是否显示。 */
   pageOpen: boolean
 }
 
 let suiteState: SuiteState = { reloadToken: 0, pageOpen: false }
 const suiteListeners = new Set<() => void>()
 
+/** 更新共享状态并通知所有订阅者。 */
 function setSuiteState(patch: Partial<SuiteState>): void {
   suiteState = { ...suiteState, ...patch }
   for (const listener of suiteListeners) listener()
 }
 
+/** 在组件中订阅共享状态。 */
 function useSuiteState(): SuiteState {
   const [state, setState] = React.useState(suiteState)
   React.useEffect(() => {
@@ -127,44 +129,9 @@ function useSuiteState(): SuiteState {
   return state
 }
 
-// ── overview page (rendered into the sidebar overlay) ──────────────────────
-
-function styles(): Record<string, React.CSSProperties> {
-  return {
-    page: {
-      position: 'absolute', inset: 0, zIndex: 20,
-      display: 'flex', flexDirection: 'column',
-      background: 'var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-canvas, #fff))',
-      borderRadius: 12, overflow: 'hidden',
-    },
-    pageHeader: {
-      display: 'flex', alignItems: 'center', gap: 6, flex: 'none',
-      height: 36, padding: '0 4px', marginBottom: 4, boxSizing: 'border-box',
-      color: 'var(--dsw-alias-label-secondary)',
-    },
-    backBtn: {
-      cursor: 'pointer', width: 28, height: 28, flex: 'none',
-      display: 'inline-flex', justifyContent: 'center', alignItems: 'center',
-      color: 'var(--dsw-alias-label-secondary)', background: 'transparent',
-      border: 'none', borderRadius: '50%', padding: 0, outline: 'none',
-    },
-    pageBody: { flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12, padding: '6px 16px 16px', boxSizing: 'border-box', fontSize: 13 },
-    h: { fontSize: 13, fontWeight: 600, margin: 0 },
-    muted: { opacity: 0.6, fontSize: 12 },
-    row: { display: 'flex', gap: 8, alignItems: 'center' },
-    btn: { padding: '5px 10px', borderRadius: 6, border: '1px solid rgba(128,128,128,.35)', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' },
-    btnPrimary: { padding: '5px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap', color: '#fff', background: 'var(--dsw-alias-state-business-primary, #4d6bfe)' },
-    card: { border: '1px solid rgba(128,128,128,.25)', borderRadius: 8, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 },
-    entry: { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 12.5 },
-    dot: { width: 8, height: 8, borderRadius: '50%', flexShrink: 0 },
-    bar: { height: 4, borderRadius: 2, background: 'rgba(128,128,128,.25)', overflow: 'hidden', flex: 1 },
-    fill: { height: '100%', borderRadius: 2, background: 'var(--dsw-alias-state-business-primary, #4d6bfe)' },
-    err: { color: 'var(--dsw-alias-state-error-primary, #e5484d)', fontSize: 12, whiteSpace: 'pre-wrap' },
-  }
-}
+// ── 总览页（渲染在侧栏浮层内） ─────────────────────────────────────────────
 
 function OverviewPage(props: { onBack: () => void }): React.ReactElement {
-  const s = styles()
   const suite = useSuiteState()
   const [projects, setProjects] = React.useState<ProjectWire[] | null>(null)
   const [error, setError] = React.useState('')
@@ -189,7 +156,7 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
     finally { setBusy(false) }
   }
 
-  // ── ＋ import flow (folder pick → scan + import all beneath it) ──
+  // ── ＋ 导入流程（选文件夹 → 扫描并导入其下所有项目） ──
 
   const [picker, setPicker] = React.useState<PickerState>({ open: false, path: '', entries: [], error: '' })
 
@@ -211,7 +178,7 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
     } catch (err) {
       const code = (err as { code?: string }).code
       if (code === 'picker-unavailable' || code === 'pick-unsupported') {
-        // browse-only host: open the in-app directory browser fallback
+        // 仅支持浏览的宿主：打开应用内目录浏览器降级方案
         setPicker({ open: true, path: '', entries: [], error: '' })
         try {
           const listing = await call<{ path: string; entries: Array<{ name: string; path: string }> }>('dir.list', {})
@@ -230,87 +197,92 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
     } catch (err) { setPicker((p) => ({ ...p, error: String((err as Error).message ?? err) })) }
   }
 
-  return e('div', { style: s.page },
-    e('div', { style: s.pageHeader },
-      e('button', {
-        style: s.backBtn, type: 'button', title: '返回工作区', 'aria-label': '返回工作区',
-        onClick: props.onBack,
-        onMouseEnter: (ev: React.MouseEvent<HTMLButtonElement>) => { ev.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)' },
-        onMouseLeave: (ev: React.MouseEvent<HTMLButtonElement>) => { ev.currentTarget.style.background = 'transparent' },
-      }, e(IconChevronLeftOutline14, { size: 14 })),
-      e('span', { style: { ...s.h, color: 'var(--dsw-alias-label-primary)' } }, 'OpenSpec 项目总览'),
-      e('div', { style: { flex: 1 } }),
-      e('button', {
-        style: { ...s.backBtn, width: 28, height: 28 }, type: 'button', title: '选择文件夹导入', 'aria-label': '选择文件夹导入',
-        disabled: busy, onClick: () => void startImport(),
-        onMouseEnter: (ev: React.MouseEvent<HTMLButtonElement>) => { ev.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)' },
-        onMouseLeave: (ev: React.MouseEvent<HTMLButtonElement>) => { ev.currentTarget.style.background = 'transparent' },
-      }, e('span', { style: { fontSize: 14, lineHeight: '14px' } }, '＋')),
-    ),
-    e('div', { style: s.pageBody },
-      picker.error !== '' && e('div', { style: s.err }, picker.error),
-      picker.open && e('div', { style: { ...s.card, maxHeight: 260, overflow: 'auto' } },
-        e('div', { style: s.row },
-          e('button', { style: s.btn, onClick: () => void browseTo(parentOf(picker.path)) }, '↑ 上级'),
-          e('span', { style: s.muted }, picker.path || '~'),
-        ),
-        picker.entries.length === 0 && e('div', { style: s.muted }, '（无子目录）'),
-        picker.entries
-          .filter((entry) => !entry.name.startsWith('.'))
-          .map((entry) => e('div', {
-            key: entry.path,
-            style: { cursor: 'pointer', padding: '3px 6px', borderRadius: 4, fontSize: 12.5 },
-            onClick: () => void browseTo(entry.path),
-            onMouseEnter: (ev: React.MouseEvent<HTMLDivElement>) => { ev.currentTarget.style.background = 'rgba(128,128,128,.15)' },
-            onMouseLeave: (ev: React.MouseEvent<HTMLDivElement>) => { ev.currentTarget.style.background = 'transparent' },
-          }, '📁 ', entry.name)),
-        e('div', { style: { ...s.row, marginTop: 6 } },
-          e('button', { style: s.btnPrimary, disabled: busy, onClick: () => void importAllUnder(picker.path) }, busy ? '导入中…' : '导入此目录下所有项目'),
-          e('button', { style: s.btn, onClick: () => setPicker((p) => ({ ...p, open: false })) }, '取消'),
-        ),
-      ),
-      error !== '' && e('div', { style: s.err }, error),
-      projects === null
-        ? e('div', { style: s.muted }, '加载中…')
-        : e('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-          projects.length === 0 && e('div', { style: s.muted }, '还没有导入项目。'),
-          projects.map((project) => {
-            const totalTasks = project.changes.reduce((sum, change) => sum + change.tasks.total, 0)
-            const doneTasks = project.changes.reduce((sum, change) => sum + change.tasks.done, 0)
-            const pct = totalTasks === 0 ? 0 : Math.round((doneTasks / totalTasks) * 100)
-            return e('div', {
-              key: project.path,
-              style: s.card,
-            },
-              e('div', { style: { ...s.row, justifyContent: 'space-between' } },
-                e('span', { style: s.h }, project.name),
-                e('button', { style: { ...s.btn, padding: '2px 8px', fontSize: 11 }, onClick: () => void doRemove(project.path), title: '从工作区和列表同时移除' }, '移除'),
-              ),
-              e('div', { style: { ...s.muted, overflow: 'hidden', textOverflow: 'ellipsis' } }, project.path),
-              !project.stillValid && e('div', { style: { ...s.muted, color: '#e5a13d' } }, '⚠ openspec/ 目录已不存在'),
-              e('div', { style: s.row },
-                e('div', { style: s.bar }, e('div', { style: { ...s.fill, width: `${pct}%` } })),
-                e('span', { style: { ...s.muted, whiteSpace: 'nowrap' } }, `${doneTasks}/${totalTasks} 任务 · ${pct}%`),
-              ),
-              project.changes.length === 0
-                ? e('div', { style: s.muted }, '无活跃提案')
-                : project.changes.map((change) => {
-                  const artifacts = (['proposal', 'design', 'specs', 'tasks'] as const)
-                    .map((key) => change.artifacts[key] ? key : null).filter((v) => v !== null)
-                  return e('div', { key: change.name, style: s.entry },
-                    e('span', { style: { ...s.dot, background: change.tasks.total > 0 && change.tasks.done === change.tasks.total ? '#30a46c' : '#e5a13d' } }),
-                    e('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' } }, change.name),
-                    e('span', { style: { ...s.muted, whiteSpace: 'nowrap' } },
-                      artifacts.join('·'), ' ', change.tasks.total > 0 ? `(${change.tasks.done}/${change.tasks.total})` : ''),
-                  )
-                }),
-            )
-          }),
-        ),
-    ),
+  return (
+    <div className="oss-page">
+      <div className="oss-page-header">
+        <button className="oss-back-btn" type="button" title="返回工作区" aria-label="返回工作区" onClick={props.onBack}>
+          <IconChevronLeftOutline14 size={14} />
+        </button>
+        <span className="oss-page-title">OpenSpec 项目总览</span>
+        <div className="oss-grow" />
+        <button className="oss-back-btn" type="button" title="选择文件夹导入" aria-label="选择文件夹导入" disabled={busy} onClick={() => void startImport()}>
+          <span className="oss-plus-icon">＋</span>
+        </button>
+      </div>
+      <div className="oss-page-body">
+        {picker.error !== '' && <div className="oss-err">{picker.error}</div>}
+        {picker.open && (
+          <div className="oss-card oss-picker">
+            <div className="oss-row">
+              <button className="oss-btn" onClick={() => void browseTo(parentOf(picker.path))}>↑ 上级</button>
+              <span className="oss-muted">{picker.path || '~'}</span>
+            </div>
+            {picker.entries.length === 0 && <div className="oss-muted">（无子目录）</div>}
+            {picker.entries
+              .filter((entry) => !entry.name.startsWith('.'))
+              .map((entry) => (
+                <div key={entry.path} className="oss-dir-entry" onClick={() => void browseTo(entry.path)}>
+                  📁 {entry.name}
+                </div>
+              ))}
+            <div className="oss-row oss-picker-actions">
+              <button className="oss-btn-primary" disabled={busy} onClick={() => void importAllUnder(picker.path)}>
+                {busy ? '导入中…' : '导入此目录下所有项目'}
+              </button>
+              <button className="oss-btn" onClick={() => setPicker((p) => ({ ...p, open: false }))}>取消</button>
+            </div>
+          </div>
+        )}
+        {error !== '' && <div className="oss-err">{error}</div>}
+        {projects === null ? (
+          <div className="oss-muted">加载中…</div>
+        ) : (
+          <div className="oss-project-list">
+            {projects.length === 0 && <div className="oss-muted">还没有导入项目。</div>}
+            {projects.map((project) => {
+              const totalTasks = project.changes.reduce((sum, change) => sum + change.tasks.total, 0)
+              const doneTasks = project.changes.reduce((sum, change) => sum + change.tasks.done, 0)
+              const pct = totalTasks === 0 ? 0 : Math.round((doneTasks / totalTasks) * 100)
+              return (
+                <div key={project.path} className="oss-card">
+                  <div className="oss-row oss-project-head">
+                    <span className="oss-h">{project.name}</span>
+                    <button className="oss-btn oss-btn-mini" onClick={() => void doRemove(project.path)} title="从工作区和列表同时移除">移除</button>
+                  </div>
+                  <div className="oss-muted oss-ellipsis">{project.path}</div>
+                  {!project.stillValid && <div className="oss-muted oss-warn">⚠ openspec/ 目录已不存在</div>}
+                  <div className="oss-row">
+                    <div className="oss-bar">
+                      <div className="oss-bar-fill" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="oss-muted oss-nowrap">{doneTasks}/{totalTasks} 任务 · {pct}%</span>
+                  </div>
+                  {project.changes.length === 0
+                    ? <div className="oss-muted">无活跃提案</div>
+                    : project.changes.map((change) => {
+                      const artifacts = (['proposal', 'design', 'specs', 'tasks'] as const)
+                        .map((key) => change.artifacts[key] ? key : null).filter((v) => v !== null)
+                      return (
+                        <div key={change.name} className="oss-entry">
+                          <span className={change.tasks.total > 0 && change.tasks.done === change.tasks.total ? 'oss-dot is-done' : 'oss-dot is-doing'} />
+                          <span className="oss-ellipsis" style={{ flex: 1, minWidth: 0 }}>{change.name}</span>
+                          <span className="oss-muted oss-nowrap">
+                            {artifacts.join('·')} {change.tasks.total > 0 ? `(${change.tasks.done}/${change.tasks.total})` : ''}
+                          </span>
+                        </div>
+                      )
+                    })}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
+/** 取路径的父目录（以 / 分隔）。 */
 function parentOf(path: string): string {
   const normalized = path.replace(/\/+$/u, '')
   if (normalized === '' || normalized === '/') return '/'
@@ -318,15 +290,14 @@ function parentOf(path: string): string {
   return cut <= 0 ? '/' : normalized.slice(0, cut)
 }
 
-// ── sidebar injection: entry button + second-level page overlay ────────────
+// ── 侧栏注入：入口按钮 + 二级页面浮层 ──────────────────────────────────────
 
 const HEADER_BTN_ID = 'openspec-suite-overview-btn'
 const PAGE_HOST_ID = 'openspec-suite-page-host'
 
 /**
- * Find the workspace section header's add-workspace icon button (an svg
- * with the IconProjectAddOutline16 geometry inside a rounded 28px/36px
- * icon button). Returns null until the sidebar has rendered it.
+ * 查找工作区区域头部的“添加工作区”图标按钮（一个圆角 28px/36px 图标按钮，
+ * 内含 IconProjectAddOutline16 几何的 svg）。侧栏渲染出该按钮之前返回 null。
  */
 function findAddWorkspaceButton(): HTMLButtonElement | null {
   const buttons = document.querySelectorAll('button')
@@ -337,18 +308,18 @@ function findAddWorkspaceButton(): HTMLButtonElement | null {
     const path = svg.querySelectorAll('path')[1]
     const d = path?.getAttribute('d') ?? ''
     if (!d.startsWith('M4.76367 0C5.36861')) continue
-    // must look like a round icon button (the workspace header style)
+    // 必须看起来是圆形图标按钮（工作区头部样式）
     const radius = window.getComputedStyle(button).borderRadius
     const round = radius === '50%' || radius.endsWith('px') && parseFloat(radius) >= 10
     if (!round) continue
-    // must NOT be inside our own page overlay
+    // 不能在我们自己的页面浮层内
     if (button.closest(`[data-openspec-suite-panel]`) !== null) continue
     return button as HTMLButtonElement
   }
   return null
 }
 
-/** True when the button is inside the sidebar's workspace list header (not e.g. a menu portal). */
+/** 按钮是否位于侧栏的工作区列表头部（而不是例如菜单传送门里）。 */
 function inWorkspaceHeader(button: HTMLButtonElement): boolean {
   const svgSize = button.querySelector('svg')?.getAttribute('width') ?? ''
   return svgSize === '16' || svgSize === '18'
@@ -359,9 +330,8 @@ interface SidebarInjection {
 }
 
 /**
- * Inject the entry button into the workspace section header and manage the
- * second-level page overlay (a React tree rendered into the workspace
- * browser root, covering header + session list while open).
+ * 把入口按钮注入工作区区域头部，并管理二级页面浮层（打开时渲染到
+ * 工作区浏览器根节点里，覆盖标题 + 会话列表）。
  */
 function injectSidebar(): SidebarInjection {
   let buttonHost: HTMLDivElement | null = null
@@ -371,20 +341,19 @@ function injectSidebar(): SidebarInjection {
   let observer: MutationObserver | null = null
   let disposed = false
 
-  /** Render (or tear down) the page overlay per suite state. */
+  /** 根据共享状态渲染（或拆除）页面浮层。 */
   const syncPage = (): void => {
     if (disposed) return
     const open = suiteState.pageOpen
-    // The page needs the sidebar DOM to anchor against; best-effort placement
-    // happens in mount(), but the React tree itself can render as soon as the
-    // host exists.
+    // 页面需要依附侧栏 DOM；挂载位置在 mount() 里尽力完成，但只要宿主
+    // 节点存在，React 树本身就可以渲染。
     if (open && pageHost === null) {
       pageHost = document.createElement('div')
       pageHost.id = PAGE_HOST_ID
       pageHost.setAttribute('data-openspec-suite-panel', '1')
       Object.assign(pageHost.style, { position: 'absolute', inset: '0', zIndex: '20' } satisfies Partial<CSSStyleDeclaration>)
-      // attach to the workspace browser root when available; body fallback is
-      // never used because the page only opens after the sidebar rendered.
+      // 依附到工作区浏览器根节点；不会退回 body，因为页面只在侧栏
+      // 渲染完成后才打开。
       const anchor = findBrowserRoot()
       if (anchor === null) { pageHost = null; return }
       anchor.appendChild(pageHost)
@@ -397,11 +366,11 @@ function injectSidebar(): SidebarInjection {
       pageHost = null
     }
     if (open && reactRoot !== null) {
-      reactRoot.render(e(OverviewPage, { onBack: () => setSuiteState({ pageOpen: false }) }))
+      reactRoot.render(<OverviewPage onBack={() => setSuiteState({ pageOpen: false })} />)
     }
   }
 
-  /** The workspace browser root: the flex container owning the section header. */
+  /** 工作区浏览器根节点：持有区域标题的 flex 容器。 */
   const findBrowserRoot = (): HTMLElement | null => {
     const target = findAddWorkspaceButton()
     if (target === null) return null
@@ -414,24 +383,7 @@ function injectSidebar(): SidebarInjection {
     button.type = 'button'
     button.title = 'OpenSpec 项目总览'
     button.setAttribute('aria-label', 'OpenSpec 项目总览')
-    Object.assign(button.style, {
-      cursor: 'pointer',
-      flex: 'none',
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: '0',
-      display: 'inline-flex',
-      background: 'transparent',
-      border: 'none',
-      borderRadius: '50%',
-      outline: 'none',
-    } satisfies Partial<CSSStyleDeclaration>)
-    const hoverOn = (): void => { button.style.background = 'var(--dsw-alias-interactive-bg-hover)' }
-    const hoverOff = (): void => { button.style.background = 'transparent' }
-    button.addEventListener('mouseenter', hoverOn)
-    button.addEventListener('mouseleave', hoverOff)
-    button.addEventListener('focus', hoverOn)
-    button.addEventListener('blur', hoverOff)
+    button.className = 'oss-entry-btn'
     button.addEventListener('click', () => {
       button.style.background = 'transparent'
       setSuiteState({ pageOpen: !suiteState.pageOpen })
@@ -462,10 +414,9 @@ function injectSidebar(): SidebarInjection {
     if (target === null) return
     if (!inWorkspaceHeader(target)) return
 
-    // The add button lives inside a max-width:60px/overflow:hidden action
-    // cluster; a sibling inserted THERE is silently clipped. Anchor on the
-    // section header strip instead (full width) and append as its last child,
-    // which visually lands immediately to the RIGHT of the add button.
+    // 添加按钮位于一个 max-width:60px/overflow:hidden 的动作簇里；
+    // 插在那里的兄弟节点会被静默裁剪。改为锚定在区域标题条（整宽）上，
+    // 作为其最后一个子节点追加，视觉上正好落在添加按钮右侧。
     const cluster = target.parentElement
     const anchor = cluster?.parentElement ?? cluster
     if (anchor === null) return
@@ -479,19 +430,15 @@ function injectSidebar(): SidebarInjection {
     }
     const button = buttonHost.querySelector('button') as HTMLButtonElement | null
     if (button === null) return
-    Object.assign(button.style, {
-      width: wide ? '28px' : '36px',
-      height: wide ? '28px' : '36px',
-      color: wide ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-primary)',
-    })
+    button.className = `oss-entry-btn ${wide ? 'is-wide' : 'is-narrow'}`
     renderIcon(button, wide ? 16 : 18)
     anchor.appendChild(buttonHost)
     placedBeside = target
 
-    // ensure the browser root is a positioning context for the page overlay
+    // 确保浏览器根节点成为页面浮层的定位上下文
     const root = anchor.parentElement ?? anchor
     if (getComputedStyle(root).position === 'static') root.style.position = 'relative'
-    // (re)attach the page overlay if it should be open
+    // 页面浮层应当打开时重新依附
     if (suiteState.pageOpen && pageHost !== null && pageHost.parentElement !== root) root.appendChild(pageHost)
     syncPage()
   }
@@ -520,6 +467,7 @@ function injectSidebar(): SidebarInjection {
   }
 }
 
+/** 插件入口：注册侧栏注入，随上下文销毁时清理。 */
 export function apply(ctx: Context): void {
   ctx.effect(() => injectSidebar().destroy)
 }

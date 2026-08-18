@@ -1,0 +1,258 @@
+// dsh-openspec-suite 客户端样式。
+// 所有界面样式统一放在这里，组件里只挂类名；
+// 少数纯动态的值（如进度条百分比宽度）以内联 style 的形式写在组件中。
+
+// ── 二级页面（覆盖在工作区浏览器区域上的总览页） ──────────────────────────
+
+.oss-page {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-canvas, #fff));
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.oss-page-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 36px;
+  padding: 0 4px;
+  margin-bottom: 4px;
+  box-sizing: border-box;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.oss-back-btn {
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  outline: none;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+
+.oss-page-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+}
+
+.oss-page-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 6px 16px 16px;
+  box-sizing: border-box;
+  font-size: 13px;
+}
+
+// ── 通用小元素 ────────────────────────────────────────────────────────────
+
+.oss-h {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.oss-muted {
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+.oss-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.oss-grow {
+  flex: 1;
+}
+
+.oss-btn {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.oss-btn-primary {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  color: #fff;
+  background: var(--dsw-alias-state-business-primary, #4d6bfe);
+}
+
+.oss-btn-mini {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.oss-card {
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.oss-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12.5px;
+}
+
+.oss-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oss-nowrap {
+  white-space: nowrap;
+}
+
+.oss-warn {
+  color: #e5a13d;
+}
+
+.oss-err {
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.oss-plus-icon {
+  font-size: 14px;
+  line-height: 14px;
+}
+
+// ── 进度条 ────────────────────────────────────────────────────────────────
+
+.oss-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(128, 128, 128, 0.25);
+  overflow: hidden;
+  flex: 1;
+}
+
+.oss-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--dsw-alias-state-business-primary, #4d6bfe);
+}
+
+// ── 状态圆点（提案完成 / 进行中） ─────────────────────────────────────────
+
+.oss-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+
+  &.is-done {
+    background: #30a46c;
+  }
+
+  &.is-doing {
+    background: #e5a13d;
+  }
+}
+
+// ── 目录选择器（应用内浏览降级方案） ──────────────────────────────────────
+
+.oss-picker {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.oss-picker-actions {
+  margin-top: 6px;
+}
+
+.oss-dir-entry {
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 12.5px;
+
+  &:hover {
+    background: rgba(128, 128, 128, 0.15);
+  }
+}
+
+// ── 项目列表 ──────────────────────────────────────────────────────────────
+
+.oss-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.oss-project-head {
+  justify-content: space-between;
+}
+
+// ── 注入到侧栏头部入口按钮 ────────────────────────────────────────────────
+
+.oss-entry-btn {
+  cursor: pointer;
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  padding: 0;
+  display: inline-flex;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  outline: none;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+
+  &.is-wide {
+    width: 28px;
+    height: 28px;
+    color: var(--dsw-alias-label-secondary);
+  }
+
+  &.is-narrow {
+    width: 36px;
+    height: 36px;
+    color: var(--dsw-alias-label-primary);
+  }
+}
