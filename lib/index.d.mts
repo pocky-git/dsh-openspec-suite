@@ -48,6 +48,30 @@ interface OpenSpecChange {
     done: number;
     total: number;
   };
+  /** 产物文件清单（含 specs/ 下的能力规格文件），按固定产物顺序排列。 */
+  files: OpenSpecArtifactFile[];
+  /** 本项目 schema.yaml 定义的期望产物（存在时），用于展示"缺失产物"。 */
+  expected: OpenSpecExpectedArtifact[];
+}
+/** schema.yaml 中定义的一个产物阶段。 */
+interface OpenSpecExpectedArtifact {
+  /** schema 里的 artifact id（如 brainstorm / proposal / test-cases）。 */
+  id: string;
+  /** 该产物在该 change 目录下是否已存在（按 generates glob 匹配）。 */
+  satisfied: boolean;
+}
+/** change 目录下的一个可预览产物文件。 */
+interface OpenSpecArtifactFile {
+  /** 产物类别：schema 产物 id，或 'file'（schema 之外/未知来源的文件）。 */
+  kind: string;
+  /** 展示名：proposal.md / design.html / specs/<capability>/spec.md。 */
+  label: string;
+  /** 绝对路径（用于 file.read 预览）。 */
+  path: string;
+  /** 字节大小。 */
+  bytes: number;
+  /** 最后修改时间（ISO 字符串）。 */
+  mtime: string;
 }
 /** 汇总一个 openspec 项目的所有活跃（未归档）change。 */
 declare function readProjectChanges(projectDir: string, signal?: AbortSignal): Promise<OpenSpecChange[]>;
@@ -57,4 +81,4 @@ interface Config {
 declare const Config: z<Config>;
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { Config, OpenSpecChange, OpenSpecProject, apply, inject, name, readProjectChanges, scanOpenspecProjects };
+export { Config, OpenSpecArtifactFile, OpenSpecChange, OpenSpecExpectedArtifact, OpenSpecProject, apply, inject, name, readProjectChanges, scanOpenspecProjects };

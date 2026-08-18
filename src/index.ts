@@ -111,6 +111,43 @@ export interface OpenSpecChange {
   artifacts: { proposal: boolean; design: boolean; specs: boolean; tasks: boolean }
   /** tasks.md 中已勾选 / 总复选框数（文件缺失时为 0/0）。 */
   tasks: { done: number; total: number }
+  /** 产物文件清单（含 specs/ 下的能力规格文件），按固定产物顺序排列。 */
+  files: OpenSpecArtifactFile[]
+  /** 本项目 schema.yaml 定义的期望产物（存在时），用于展示"缺失产物"。 */
+  expected: OpenSpecExpectedArtifact[]
+}
+
+/** schema.yaml 中定义的一个产物阶段。 */
+export interface OpenSpecExpectedArtifact {
+  /** schema 里的 artifact id（如 brainstorm / proposal / test-cases）。 */
+  id: string
+  /** 该产物在该 change 目录下是否已存在（按 generates glob 匹配）。 */
+  satisfied: boolean
+}
+
+/** change 目录下的一个可预览产物文件。 */
+export interface OpenSpecArtifactFile {
+  /** 产物类别：schema 产物 id，或 'file'（schema 之外/未知来源的文件）。 */
+  kind: string
+  /** 展示名：proposal.md / design.html / specs/<capability>/spec.md。 */
+  label: string
+  /** 绝对路径（用于 file.read 预览）。 */
+  path: string
+  /** 字节大小。 */
+  bytes: number
+  /** 最后修改时间（ISO 字符串）。 */
+  mtime: string
+}
+
+/** 读取文件 stat 摘要；文件不可读时返回 undefined。 */
+async function statFile(file: string): Promise<{ bytes: number; mtime: string } | undefined> {
+  try {
+    const stat = await fsp.stat(file)
+    if (!stat.isFile()) return undefined
+    return { bytes: stat.size, mtime: stat.mtime.toISOString() }
+  } catch {
+    return undefined
+  }
 }
 
 /** 解析 tasks.md 的复选框进度。 */
@@ -124,30 +161,138 @@ function parseTasks(content: string): { done: number; total: number } {
   return { done, total }
 }
 
-/** 读取一个 change 目录并汇总为进度摘要。 */
-async function readChange(changeDir: string, changeName: string, signal?: AbortSignal): Promise<OpenSpecChange | null> {
-  const artifacts = { proposal: false, design: false, specs: false, tasks: false }
-  let tasksProgress = { done: 0, total: 0 }
+/**
+ * 读取项目自定义 schema（openspec/schemas 下任意子目录的 schema.yaml，
+ * 取第一个存在的），抽取 artifacts 列表（id + generates glob）。
+ * 不存在/解析失败返回 []。
+ */
+async function readSchemaArtifacts(projectDir: string): Promise<Array<{ id: string; generates: string }>> {
+  let names: string[]
   try {
-    const entries = await fsp.readdir(changeDir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (signal?.aborted) return null
-      if (entry.name === 'proposal.md') artifacts.proposal = true
-      else if (entry.name === 'design.md') artifacts.design = true
-      else if (entry.name === 'tasks.md') {
-        artifacts.tasks = true
-        try {
-          tasksProgress = parseTasks(await fsp.readFile(join(changeDir, 'tasks.md'), 'utf8'))
-        } catch { /* tasks.md 读不出来仍视为已存在 */ }
-      } else if (entry.name === 'specs' && entry.isDirectory()) {
-        const specFiles = await fsp.readdir(join(changeDir, 'specs'), { withFileTypes: true })
-        artifacts.specs = specFiles.some((candidate) => candidate.isFile() && candidate.name.endsWith('.md'))
+    names = await fsp.readdir(join(projectDir, 'openspec', 'schemas'))
+  } catch {
+    return []
+  }
+  for (const schemaDirName of names.sort()) {
+    let content: string
+    try {
+      content = await fsp.readFile(join(projectDir, 'openspec', 'schemas', schemaDirName, 'schema.yaml'), 'utf8')
+    } catch {
+      continue
+    }
+    // 极简 YAML 抽取：只找 "artifacts:" 顶层级下每个 "- id: X" 条目的
+    // id 与 generates 字段（generates 可能带引号）。schema.yaml 是
+    // 插件只读数据，不值得引入完整 yaml 解析依赖。
+    const result: Array<{ id: string; generates: string }> = []
+    let inArtifacts = false
+    let pendingId: string | null = null
+    for (const rawLine of content.split(/\r?\n/u)) {
+      if (/^\S/u.test(rawLine)) inArtifacts = rawLine.trimEnd() === 'artifacts:'
+      if (!inArtifacts) continue
+      const idMatch = /^\s*-\s+id:\s*(\S+)\s*$/u.exec(rawLine)
+      if (idMatch !== null) {
+        if (pendingId !== null) result.push({ id: pendingId, generates: '' })
+        pendingId = idMatch[1]!
+        continue
+      }
+      const genMatch = /^\s*generates:\s*['"]?([^'"\n]+?)['"]?\s*$/u.exec(rawLine)
+      if (genMatch !== null && pendingId !== null) {
+        result.push({ id: pendingId, generates: genMatch[1]!.trim() })
+        pendingId = null
       }
     }
-  } catch {
-    return null
+    if (pendingId !== null) result.push({ id: pendingId, generates: '' })
+    if (result.length > 0) return result
   }
-  return { name: changeName, artifacts, tasks: tasksProgress }
+  return []
+}
+
+/** 简化 glob → RegExp（支持 ** 与 *，用于匹配 generates 模式）。 */
+function globToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, '\u0000')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\u0000/g, '.*')
+  return new RegExp(`^${escaped}$`, 'u')
+}
+
+/** 判断相对路径（change 目录内）是否匹配某个 generates 模式。 */
+function matchesGlob(relPath: string, generates: string): boolean {
+  if (generates === '') return false
+  // "specs/**/*.md" 应同时匹配 "specs/a/spec.md"（** 跨目录）；
+  // 也接受目录前缀式匹配（specs/x → specs/x/...）
+  return globToRegExp(generates).test(relPath)
+}
+
+/**
+ * 递归列举 change 目录下全部产物文件（含子目录如 specs/<cap>/spec.md）。
+ * 隐藏文件与 node_modules 除外。
+ */
+async function listChangeFilesRecursively(changeDir: string, signal?: AbortSignal): Promise<Array<{ rel: string; path: string; stat: { bytes: number; mtime: string } }>> {
+  const out: Array<{ rel: string; path: string; stat: { bytes: number; mtime: string } }> = []
+  const walk = async (dir: string, prefix: string): Promise<void> => {
+    let entries
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (signal?.aborted) return
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+      const childPath = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        await walk(childPath, `${prefix}${entry.name}/`)
+      } else {
+        const stat = await statFile(childPath)
+        if (stat !== undefined) out.push({ rel: `${prefix}${entry.name}`, path: childPath, stat })
+      }
+    }
+  }
+  await walk(changeDir, '')
+  out.sort((a, b) => a.rel.localeCompare(b.rel))
+  return out
+}
+
+/** 读取一个 change 目录并汇总为进度摘要。 */
+async function readChange(changeDir: string, changeName: string, schemaArtifacts: Array<{ id: string; generates: string }>, signal?: AbortSignal): Promise<OpenSpecChange | null> {
+  const artifacts = { proposal: false, design: false, specs: false, tasks: false }
+  let tasksProgress = { done: 0, total: 0 }
+  const listed = await listChangeFilesRecursively(changeDir, signal)
+  if (signal?.aborted) return null
+  // schema 产物匹配：把每个文件归到第一个匹配的 artifact id 上。
+  const kindByRel = new Map<string, string>()
+  for (const { rel } of listed) {
+    for (const artifact of schemaArtifacts) {
+      if (matchesGlob(rel, artifact.generates)) {
+        kindByRel.set(rel, artifact.id)
+        break
+      }
+    }
+  }
+  const files: OpenSpecArtifactFile[] = listed.map(({ rel, path, stat }) => ({
+    kind: kindByRel.get(rel) ?? 'file',
+    label: rel,
+    path,
+    ...stat,
+  }))
+  // 经典四产物布尔值（与 schema 无关，保留给旧 UI/进度计算）。
+  for (const { rel, path } of listed) {
+    if (rel === 'proposal.md') artifacts.proposal = true
+    else if (rel === 'design.md' || rel === 'design.html') artifacts.design = true
+    else if (rel === 'tasks.md') {
+      artifacts.tasks = true
+      try {
+        tasksProgress = parseTasks(await fsp.readFile(path, 'utf8'))
+      } catch { /* tasks.md 读不出来仍视为已存在 */ }
+    } else if (rel.startsWith('specs/') && rel.endsWith('.md')) artifacts.specs = true
+  }
+  // schema 期望产物满足状态。
+  const expected: OpenSpecExpectedArtifact[] = schemaArtifacts.map((artifact) => ({
+    id: artifact.id,
+    satisfied: listed.some(({ rel }) => matchesGlob(rel, artifact.generates)),
+  }))
+  return { name: changeName, artifacts, tasks: tasksProgress, files, expected }
 }
 
 /** 汇总一个 openspec 项目的所有活跃（未归档）change。 */
@@ -159,11 +304,12 @@ export async function readProjectChanges(projectDir: string, signal?: AbortSigna
   } catch {
     return []
   }
+  const schemaArtifacts = await readSchemaArtifacts(projectDir)
   const changes: OpenSpecChange[] = []
   for (const entry of entries) {
     if (signal?.aborted) break
     if (!entry.isDirectory() || entry.name === 'archive') continue
-    const change = await readChange(join(changesDir, entry.name), entry.name, signal)
+    const change = await readChange(join(changesDir, entry.name), entry.name, schemaArtifacts, signal)
     if (change !== null) changes.push(change)
   }
   return changes
@@ -189,6 +335,52 @@ interface Prefs {
 }
 
 // ── 传输层辅助 ──────────────────────────────────────────────────────────────
+
+/** 可预览的文件扩展名（产物常见类型；.html 通过 iframe 原始路由预览）。 */
+const PREVIEWABLE_EXTENSIONS = new Set(['.md', '.html', '.htm', '.yaml', '.yml', '.json', '.txt', '.js', '.css'])
+
+/** 判断路径是否为可预览类型。 */
+function isPreviewablePath(filePath: string): boolean {
+  const dot = filePath.lastIndexOf('.')
+  if (dot === -1) return false
+  return PREVIEWABLE_EXTENSIONS.has(filePath.slice(dot).toLowerCase())
+}
+
+/** 原始路由的 content-type。 */
+function contentTypeFor(filePath: string): string {
+  const dot = filePath.lastIndexOf('.')
+  const ext = dot === -1 ? '' : filePath.slice(dot).toLowerCase()
+  if (ext === '.html' || ext === '.htm') return 'text/html; charset=utf-8'
+  if (ext === '.json') return 'application/json; charset=utf-8'
+  if (ext === '.yaml' || ext === '.yml') return 'text/yaml; charset=utf-8'
+  return 'text/plain; charset=utf-8'
+}
+
+/**
+ * 校验一个文件是否在某个已注册工作区的 openspec/ 目录内、存在、
+ * 且小于 2MB。返回 stat 或 error（直接可用于 writeError）。
+ */
+async function checkPreviewableFile(
+  ctx: Context,
+  filePath: string,
+): Promise<{ stat?: { bytes: number; mtime: string }; error?: { code: string; message: string; status: number } }> {
+  const workspaces = ctx.workspaceRegistry.list()
+  const inside = workspaces.some((ws) => filePath.startsWith(join(ws.path, 'openspec') + '/'))
+  if (!inside) {
+    return { error: { code: 'forbidden', message: 'path is outside any registered workspace openspec/ directory', status: 403 } }
+  }
+  let stat
+  try {
+    stat = await fsp.stat(filePath)
+  } catch {
+    return { error: { code: 'not-found', message: 'file not found', status: 404 } }
+  }
+  if (!stat.isFile()) return { error: { code: 'not-found', message: 'not a file', status: 404 } }
+  // JS 依赖（如 mermaid.min.js）可能较大；静态产物上限 2MB，依赖文件 10MB。
+  const limit = filePath.endsWith('.js') || filePath.endsWith('.css') ? 10_000_000 : 2_000_000
+  if (stat.size > limit) return { error: { code: 'too-large', message: `file larger than ${limit} bytes`, status: 413 } }
+  return { stat: { bytes: stat.size, mtime: stat.mtime.toISOString() } }
+}
 
 function writeJson(res: unknown, status: number, body: unknown): void {
   const r = res as { setHeader(k: string, v: string): void; statusCode: number; end(body: string): void }
@@ -259,6 +451,46 @@ export function apply(ctx: Context, config: Config): void {
           return
         }
         const url = new URL(req.url ?? '/', 'http://localhost')
+        // GET /openspec/api/raw/<wsId>/<openspec 内相对路径> —— 原始文件
+        // 路由，供 iframe 预览 design.html 等交互产物。把路径编进 URL
+        // path（而非 query），iframe 内的相对引用（../../mermaid.min.js）
+        // 会被浏览器相对此 URL 正确解析到同一路由下的真实文件位置。
+        if (req.method === 'GET' && url.pathname.startsWith('/openspec/api/raw/')) {
+          const rest = url.pathname.slice('/openspec/api/raw/'.length)
+          const slash = rest.indexOf('/')
+          if (slash === -1) { writeError(res, 'bad-request', 'missing path', 400); return }
+          const wsId = decodeURIComponent(rest.slice(0, slash))
+          const relPath = decodeURIComponent(rest.slice(slash + 1))
+          // wsId 可能是注册表 id，也可能是 btoa(projectPath)（客户端
+          // 构造 URL 时未必知道注册表 id，直接用路径编码定位工作区）。
+          const byId = ctx.workspaceRegistry.list().find((w) => w.id === wsId)
+          let ws = byId
+          if (ws === undefined) {
+            try {
+              const decodedPath = Buffer.from(wsId, 'base64').toString('utf8')
+              ws = ctx.workspaceRegistry.list().find((w) => w.path === decodedPath)
+            } catch { /* 非法 base64 就当找不到 */ }
+          }
+          if (ws === undefined) { writeError(res, 'not-found', 'unknown workspace', 404); return }
+          const filePath = join(ws.path, 'openspec', relPath)
+          // 栅栏：解析后必须仍位于该工作区 openspec/ 之下（防 .. 逃逸）。
+          if (!filePath.startsWith(join(ws.path, 'openspec') + '/')) {
+            writeError(res, 'forbidden', 'path escapes openspec/ directory', 403)
+            return
+          }
+          if (!isPreviewablePath(filePath)) {
+            writeError(res, 'forbidden', 'file type not previewable', 403)
+            return
+          }
+          const check = await checkPreviewableFile(ctx, filePath)
+          if (check.error !== undefined) { writeError(res, check.error.code, check.error.message, check.error.status); return }
+          const content = await fsp.readFile(filePath)
+          const r = res as { setHeader(k: string, v: string): void; statusCode: number; end(body: unknown): void }
+          r.setHeader('content-type', contentTypeFor(filePath))
+          r.statusCode = 200
+          r.end(content)
+          return
+        }
         const method = url.pathname.replace(/^\/openspec\/api\//u, '')
         try {
           if (method === 'prefs.get') {
@@ -466,6 +698,22 @@ export function apply(ctx: Context, config: Config): void {
                 await updatePrefs({ ...prefs, projects: reconciled })
               }
               writeOk(res, { projects: openspecProjects })
+              return
+            }
+            case 'file.read': {
+              // 读取一个产物文件的内容用于预览。安全栅栏：
+              // 1. 必须位于某个已注册工作区的 openspec/ 目录之内；
+              // 2. 必须是受限预览类型（md/html/yaml/json/txt）；
+              // 3. 大小上限 2MB。
+              const filePath = requireString(body, 'path')
+              if (!isPreviewablePath(filePath)) {
+                writeError(res, 'forbidden', 'file type not previewable', 403)
+                return
+              }
+              const check = await checkPreviewableFile(ctx, filePath)
+              if (check.error !== undefined) { writeError(res, check.error.code, check.error.message, check.error.status); return }
+              const content = await fsp.readFile(filePath, 'utf8')
+              writeOk(res, { path: filePath, bytes: check.stat!.bytes, mtime: check.stat!.mtime, content })
               return
             }
             default:

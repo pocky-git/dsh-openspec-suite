@@ -4,6 +4,8 @@
 
 - **📁 项目导入**：选择一个文件夹，自动扫描其中所有含 `openspec/changes/` 的项目（支持嵌套，最深 4 层），一键导入 DSH 工作区
 - **📊 提案进度总览**：在侧边栏工作区头部注入一个 OpenSpec 入口按钮，点击打开总览页，集中查看每个已导入项目的活跃提案（proposal / design / specs / tasks 产物完成度 + tasks.md 勾选进度）
+- **📄 产物列举与预览**：每个提案行可展开，列出目录下**全部**产物文件（递归，含 specs/ 子目录、schema 自定义产物如 brainstorm.md / code-changes.md / design.html 等，附大小与修改时间）；点击任一文件在应用内预览——Markdown 安全渲染，交互式 HTML（如 design.html）经沙箱 iframe 加载（Mermaid/Alpine 等相对路径依赖可正常解析）
+- **🧩 自定义 schema 支持**：若项目定义了 `openspec/schemas/` 下的自定义 schema.yaml，提案卡片会按 schema 的 artifacts 展示期望产物 chips（✓ 已产出 / ○ 缺失），一眼看出工作流推进到哪个阶段
 
 ## 安装
 

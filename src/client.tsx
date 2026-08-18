@@ -18,15 +18,61 @@
 /** 插件标识。 */
 export const name = 'dsh-openspec-suite/client'
 
+/**
+ * 必选依赖 dsh-better-sidebar：dsh web 运行时不支持 'xxx?' 可选注入
+ * 语法（会把 'betterSidebar?' 当成字面服务名等待，导致插件永远
+ * pending）。未安装该插件时本客户端半不激活。
+ */
+export const inject = ['betterSidebar']
+
 import * as React from 'react'
 import * as ReactDOMClient from 'react-dom/client'
 import type { Context } from './client-context.ts'
 import './client.less'
 
+/**
+ * 当前插件上下文（apply 时捕获）。用于跨插件服务调用——目前是
+ * dsh-better-sidebar 的 ctx.betterSidebar.openFile（把产物打开到
+ * 侧栏编辑器）。未安装该插件时为 undefined，回退内置预览。
+ */
+let pluginContext: Context | undefined
+
+/**
+ * 尝试把文件打开到 dsh-better-sidebar 的编辑器 tab。成功打开返回
+ * true；插件未安装/服务不可用/无活动会话返回 false（调用方回退）。
+ */
+function openInBetterSidebar(path: string, title: string): boolean {
+  const service = pluginContext?.betterSidebar
+  if (service === undefined || typeof service.openFile !== 'function') return false
+  try {
+    const sessionId = service.getSnapshot().sessionId
+    if (sessionId === undefined || sessionId === '') return false
+    service.openFile({ sessionId }, path, title)
+    return true
+  } catch {
+    return false
+  }
+}
+
+interface OpenSpecArtifactFileWire {
+  kind: string
+  label: string
+  path: string
+  bytes: number
+  mtime: string
+}
+
+interface OpenSpecExpectedArtifactWire {
+  id: string
+  satisfied: boolean
+}
+
 interface OpenSpecChangeWire {
   name: string
   artifacts: { proposal: boolean; design: boolean; specs: boolean; tasks: boolean }
   tasks: { done: number; total: number }
+  files: OpenSpecArtifactFileWire[]
+  expected: OpenSpecExpectedArtifactWire[]
 }
 
 interface ProjectWire {
@@ -80,22 +126,22 @@ const ICON_LIST_PEN_PATHS = [
   'M8.24493 13.3711L7.49015 14.8806C7.40148 15.058 7.58961 15.2461 7.76695 15.1574L9.27651 14.4027L14.6147 9.09934L13.5832 8.06775L8.24493 13.3711Z',
 ]
 
-/** 列表-笔 图标（16px 线性风格）。 */
-function IconListPenOutline16(props: { size?: number }): React.ReactElement {
-  const size = props.size ?? 16
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'block', flex: 'none' }}>
-      {ICON_LIST_PEN_PATHS.map((d, index) => <path key={index} d={d} fill="currentColor" />)}
-    </svg>
-  )
-}
-
 /** 左箭头（返回）图标（14px 线性风格）。 */
 function IconChevronLeftOutline14(props: { size?: number }): React.ReactElement {
   const size = props.size ?? 14
   return (
     <svg width={size} height={size} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'block', flex: 'none' }}>
       <path d="M8.87467 3.40786C9.08815 3.62133 9.08815 3.96753 8.87467 4.18101L6.05568 7L8.87467 9.81899C9.08815 10.0325 9.08815 10.3787 8.87467 10.5921C8.6612 10.8056 8.315 10.8056 8.10152 10.5921L4.87533 7.36594C4.66186 7.15247 4.66186 6.80626 4.87533 6.59279L8.10152 3.3666C8.315 3.15312 8.6612 3.15312 8.87467 3.3666Z" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** 右箭头（展开指示）图标（线性风格；容器旋转 90° 表示展开）。 */
+function IconChevronRightOutline12(props: { size?: number }): React.ReactElement {
+  const size = props.size ?? 12
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'block', flex: 'none' }}>
+      <path d="M5.12533 3.40786C4.91185 3.62133 4.91185 3.96753 5.12533 4.18101L7.94432 7L5.12533 9.81899C4.91185 10.0325 4.91185 10.3787 5.12533 10.5921C5.3388 10.8056 5.685 10.8056 5.89848 10.5921L9.12467 7.36594C9.33814 7.15247 9.33814 6.80626 9.12467 6.59279L5.89848 3.3666C5.685 3.15312 5.3388 3.15312 5.12533 3.3666Z" fill="currentColor" />
     </svg>
   )
 }
@@ -159,6 +205,7 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
   // ── ＋ 导入流程（选文件夹 → 扫描并导入其下所有项目） ──
 
   const [picker, setPicker] = React.useState<PickerState>({ open: false, path: '', entries: [], error: '' })
+  const [preview, setPreview] = React.useState<FilePreviewState | null>(null)
 
   const importAllUnder = async (dir: string): Promise<void> => {
     setBusy(true); setError('')
@@ -201,7 +248,7 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
     <div className="oss-page">
       <div className="oss-page-header">
         <button className="oss-back-btn" type="button" title="返回工作区" aria-label="返回工作区" onClick={props.onBack}>
-          <IconChevronLeftOutline14 size={14} />
+          <IconChevronLeftOutline14 size={18} />
         </button>
         <span className="oss-page-title">OpenSpec 项目总览</span>
         <div className="oss-grow" />
@@ -259,27 +306,266 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
                   </div>
                   {project.changes.length === 0
                     ? <div className="oss-muted">无活跃提案</div>
-                    : project.changes.map((change) => {
-                      const artifacts = (['proposal', 'design', 'specs', 'tasks'] as const)
-                        .map((key) => change.artifacts[key] ? key : null).filter((v) => v !== null)
-                      return (
-                        <div key={change.name} className="oss-entry">
-                          <span className={change.tasks.total > 0 && change.tasks.done === change.tasks.total ? 'oss-dot is-done' : 'oss-dot is-doing'} />
-                          <span className="oss-ellipsis" style={{ flex: 1, minWidth: 0 }}>{change.name}</span>
-                          <span className="oss-muted oss-nowrap">
-                            {artifacts.join('·')} {change.tasks.total > 0 ? `(${change.tasks.done}/${change.tasks.total})` : ''}
-                          </span>
-                        </div>
-                      )
-                    })}
+                    : project.changes.map((change) => (
+                      <ChangeRow
+                        key={change.name}
+                        change={change}
+                        onOpenFile={(file, changeName) => {
+                          // 优先打开到 dsh-better-sidebar 编辑器；不可用时
+                          // 回退应用内预览浮层。
+                          if (!openInBetterSidebar(file.path, `${changeName}/${file.label}`)) {
+                            setPreview({ change: changeName, file, projectPath: project.path })
+                          }
+                        }}
+                      />
+                    ))}
                 </div>
               )
             })}
           </div>
         )}
       </div>
+      {preview !== null && (
+        <div className="oss-preview-overlay">
+          <FilePreview state={preview} onBack={() => setPreview(null)} />
+        </div>
+      )}
     </div>
   )
+}
+
+// ── Markdown 预览（三级浮层，覆盖在总览页内部） ───────────────────────────
+
+interface FilePreviewState {
+  change: string
+  file: OpenSpecArtifactFileWire
+  /** 项目根目录（用于构造 iframe raw URL）。 */
+  projectPath: string
+}
+
+/** 调用 file.read 拉取内容。 */
+function useFileContent(path: string): { content: string | null; error: string } {
+  const [content, setContent] = React.useState<string | null>(null)
+  const [error, setError] = React.useState('')
+  React.useEffect(() => {
+    if (path === '') return
+    const controller = new AbortController()
+    setContent(null); setError('')
+    call<{ content: string }>('file.read', { path }, controller.signal)
+      .then((value) => setContent(value.content))
+      .catch((err) => { if (err.name !== 'AbortError') setError(String((err as Error).message ?? err)) })
+    return () => controller.abort()
+  }, [path])
+  return { content, error }
+}
+
+/**
+ * 极简安全 Markdown 渲染：先整体 HTML 转义再做行级/内联替换，
+ * 输出受限标签集合（标题/列表/代码块/复选框/粗体/行内代码），
+ * 不引入完整 markdown 依赖，也不会注入任意 HTML。
+ */
+function renderMarkdown(md: string): string {
+  const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const inline = (s: string): string => esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  const lines = md.split(/\r?\n/u)
+  const out: string[] = []
+  let inCode = false
+  let listOpen = false
+  const closeList = (): void => { if (listOpen) { out.push('</ul>'); listOpen = false } }
+  for (const raw of lines) {
+    if (raw.startsWith('```')) {
+      closeList()
+      out.push(inCode ? '</code></pre>' : '<pre class="oss-md-pre"><code>')
+      inCode = !inCode
+      continue
+    }
+    if (inCode) { out.push(`${esc(raw)}\n`); continue }
+    const heading = /^(#{1,4})\s+(.*)$/u.exec(raw)
+    if (heading !== null) {
+      closeList()
+      const level = heading[1]!.length
+      out.push(`<h${level} class="oss-md-h${level}">${inline(heading[2]!)}</h${level}>`)
+      continue
+    }
+    const task = /^\s*[-*]\s+\[( |x|X)\]\s+(.*)$/u.exec(raw)
+    if (task !== null) {
+      if (!listOpen) { out.push('<ul class="oss-md-ul">'); listOpen = true }
+      const checked = task[1] !== ' '
+      out.push(`<li class="oss-md-task ${checked ? 'is-done' : ''}"><span class="oss-md-check">${checked ? '☑' : '☐'}</span>${inline(task[2]!)}</li>`)
+      continue
+    }
+    const bullet = /^\s*[-*]\s+(.*)$/u.exec(raw)
+    if (bullet !== null) {
+      if (!listOpen) { out.push('<ul class="oss-md-ul">'); listOpen = true }
+      out.push(`<li>${inline(bullet[1]!)}</li>`)
+      continue
+    }
+    closeList()
+    if (raw.trim() === '') continue
+    out.push(`<p class="oss-md-p">${inline(raw)}</p>`)
+  }
+  closeList()
+  if (inCode) out.push('</code></pre>')
+  return out.join('')
+}
+
+/** 文件预览浮层：头部（返回 + 文件名 + 元信息）+ Markdown 内容区。 */
+/** 构造 iframe 用的原始文件 URL（需 projectPath 定位工作区）。 */
+function rawFileUrl(projectPath: string, filePath: string): string {
+  const relPath = filePath.startsWith(`${projectPath}/`) ? filePath.slice(projectPath.length + 1) : filePath
+  return `/openspec/api/raw/${encodeURIComponent(btoa(projectPath))}/${relPath.split('/').map(encodeURIComponent).join('/')}`
+}
+
+/** 是否用 iframe 预览（交互式 HTML 产物）。 */
+function isHtmlFile(filePath: string): boolean {
+  return /\.html?$/iu.test(filePath)
+}
+
+function FilePreview(props: { state: FilePreviewState; onBack: () => void }): React.ReactElement {
+  const { state } = props
+  const html = isHtmlFile(state.file.path)
+  const { content, error } = useFileContent(html ? '' : state.file.path)
+  return (
+    <div className="oss-preview">
+      <div className="oss-page-header">
+        <button className="oss-back-btn" type="button" title="返回产物列表" aria-label="返回产物列表" onClick={props.onBack}>
+          <IconChevronLeftOutline14 size={14} />
+        </button>
+        <span className="oss-page-title oss-ellipsis">{state.file.label}</span>
+        <div className="oss-grow" />
+      </div>
+      <div className="oss-preview-meta oss-muted">
+        <span className="oss-ellipsis">{state.change} / {state.file.label}</span>
+        <span className="oss-nowrap">{formatBytes(state.file.bytes)} · {formatMtime(state.file.mtime)}</span>
+      </div>
+      <div className="oss-preview-body">
+        {error !== '' && <div className="oss-err">{error}</div>}
+        {html ? (
+          <iframe
+            className="oss-preview-frame"
+            src={rawFileUrl(state.projectPath, state.file.path)}
+            title={state.file.label}
+            sandbox="allow-scripts"
+          />
+        ) : (
+          <>
+            {content === null && error === '' && <div className="oss-muted">加载中…</div>}
+            {content !== null && (
+              <div className="oss-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 下拉列表中的一行：一个已生成文件，或一个未生成的期望产物。 */
+interface ArtifactRow {
+  key: string
+  /** 已生成时可预览的文件；未生成时为 null。 */
+  file: OpenSpecArtifactFileWire | null
+  /** 展示标题：文件相对路径或产物 id。 */
+  label: string
+}
+
+/**
+ * 把 change 的文件与 schema 期望产物合并成下拉行：按 schema 顺序
+ * 排列每个产物阶段，已生成的展示其文件（一个阶段可能多个文件，
+ * 如 specs/**），未生成的展示 ○ 占位行；schema 之外的文件（kind
+ * 为 'file'）追加在最后。无 schema 时退化为纯文件列表。
+ */
+function buildArtifactRows(change: OpenSpecChangeWire): ArtifactRow[] {
+  const rows: ArtifactRow[] = []
+  if (change.expected.length === 0) {
+    for (const file of change.files) {
+      rows.push({ key: file.path, file, label: file.label })
+    }
+    return rows
+  }
+  for (const artifact of change.expected) {
+    const matches = change.files.filter((file) => file.kind === artifact.id)
+    if (matches.length > 0) {
+      for (const file of matches) {
+        rows.push({ key: file.path, file, label: file.label })
+      }
+    } else {
+      rows.push({ key: `missing:${artifact.id}`, file: null, label: artifact.id })
+    }
+  }
+  for (const file of change.files.filter((f) => f.kind === 'file')) {
+    rows.push({ key: file.path, file, label: file.label })
+  }
+  return rows
+}
+
+/** 单个 change 卡片行：可展开产物下拉列表，点击已生成文件进入预览。 */
+function ChangeRow(props: { change: OpenSpecChangeWire; onOpenFile: (file: OpenSpecArtifactFileWire, change: string) => void }): React.ReactElement {
+  const [expanded, setExpanded] = React.useState(false)
+  const { change } = props
+  const rows = buildArtifactRows(change)
+  const hasContent = rows.length > 0
+  return (
+    <div className="oss-change">
+      <div
+        className="oss-entry oss-entry-clickable"
+        onClick={() => { if (hasContent) setExpanded((v) => !v) }}
+        role={hasContent ? 'button' : undefined}
+        tabIndex={hasContent ? 0 : undefined}
+        onKeyDown={(e) => { if (hasContent && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setExpanded((v) => !v) } }}
+      >
+        <span className={change.tasks.total > 0 && change.tasks.done === change.tasks.total ? 'oss-dot is-done' : 'oss-dot is-doing'} />
+        <span className={`oss-caret ${expanded ? 'is-open' : ''} ${hasContent ? '' : 'is-hidden'}`}>
+          <IconChevronRightOutline12 size={12} />
+        </span>
+        <span className="oss-ellipsis" style={{ flex: 1, minWidth: 0 }}>{change.name}</span>
+        <span className="oss-muted oss-nowrap">
+          {change.tasks.total > 0 ? `(${change.tasks.done}/${change.tasks.total}) ` : ''}
+        </span>
+      </div>
+      {expanded && (
+        <div className="oss-files">
+          {rows.map((row) => row.file !== null ? (
+            <div
+              key={row.key}
+              className="oss-file"
+              role="button"
+              tabIndex={0}
+              title={`${row.label} · ${formatBytes(row.file.bytes)} · ${formatMtime(row.file.mtime)}`}
+              onClick={() => props.onOpenFile(row.file!, change.name)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onOpenFile(row.file!, change.name) } }}
+            >
+              <span className="oss-file-status is-done" title="已生成">✓</span>
+              <span className="oss-ellipsis" style={{ flex: 1, minWidth: 0 }}>{row.label}</span>
+              <span className="oss-muted oss-nowrap">{formatBytes(row.file.bytes)}</span>
+            </div>
+          ) : (
+            <div key={row.key} className="oss-file is-missing" title="未生成">
+              <span className="oss-file-status is-missing">○</span>
+              <span className="oss-ellipsis" style={{ flex: 1, minWidth: 0 }}>{row.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 字节数的紧凑展示。 */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`
+}
+
+/** mtime 的本地紧凑展示。 */
+function formatMtime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 /** 取路径的父目录（以 / 分隔）。 */
@@ -518,5 +804,12 @@ function injectSidebar(): SidebarInjection {
 
 /** 插件入口：注册侧栏注入，随上下文销毁时清理。 */
 export function apply(ctx: Context): void {
-  ctx.effect(() => injectSidebar().destroy)
+  pluginContext = ctx
+  ctx.effect(() => {
+    const dispose = injectSidebar().destroy
+    return () => {
+      pluginContext = undefined
+      dispose()
+    }
+  })
 }

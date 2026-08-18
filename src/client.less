@@ -306,3 +306,205 @@
   line-height: 20px;
   font-weight: 400;
 }
+
+// ── change 展开 / 产物文件清单 ────────────────────────────────────────────
+
+.oss-change {
+  display: flex;
+  flex-direction: column;
+}
+
+.oss-entry-clickable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 4px 4px;
+  margin: 0 -4px;
+  user-select: none;
+
+  &:hover {
+    background: rgba(128, 128, 128, 0.12);
+  }
+}
+
+.oss-caret {
+  flex: none;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 12px;
+  height: 12px;
+  color: var(--dsw-alias-label-secondary);
+  // 以容器几何中心为旋转轴（容器与 svg 同为 12px 方形）。
+  transform-origin: 50% 50%;
+  transition: transform 0.15s ease;
+
+  &.is-open {
+    transform: rotate(90deg);
+  }
+
+  &.is-hidden {
+    visibility: hidden;
+  }
+}
+
+.oss-files {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 4px 26px;
+  border-left: 1px solid rgba(128, 128, 128, 0.3);
+  padding-left: 6px;
+}
+
+.oss-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+// ── 下拉列表行首的生成状态图标 ────────────────────────────────────────────
+
+.oss-file-status {
+  flex: none;
+  width: 12px;
+  font-size: 11px;
+  text-align: center;
+
+  &.is-done {
+    color: #30a46c;
+  }
+
+  &.is-missing {
+    color: var(--dsw-alias-label-secondary);
+    opacity: 0.6;
+  }
+}
+
+.oss-file.is-missing {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.oss-preview-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 6px;
+  background: #fff;
+}
+
+// ── 文件预览（三级浮层） ──────────────────────────────────────────────────
+
+.oss-preview-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+}
+
+.oss-preview {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-canvas, #fff));
+}
+
+.oss-preview-meta {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 16px 4px;
+}
+
+.oss-preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 16px 16px;
+  box-sizing: border-box;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+// ── 极简 Markdown 渲染 ────────────────────────────────────────────────────
+
+.oss-md {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.oss-md-h1, .oss-md-h2, .oss-md-h3, .oss-md-h4 {
+  margin: 8px 0 0;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.oss-md-h1 { font-size: 15px; }
+.oss-md-h2 { font-size: 14px; }
+.oss-md-h3 { font-size: 13px; }
+.oss-md-h4 { font-size: 12.5px; }
+
+.oss-md-p {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.oss-md-ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.oss-md-task {
+  list-style: none;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+
+  &.is-done .oss-md-check + * {
+    // 勾选项整体弱化（check 之后的内容）
+  }
+}
+
+.oss-md-check {
+  flex: none;
+  font-size: 12px;
+}
+
+.oss-md-pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(128, 128, 128, 0.12);
+  overflow-x: auto;
+  font-size: 11.5px;
+  font-family: var(--dsw-alias-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+
+  code {
+    font-family: inherit;
+  }
+}
+
+.oss-md {
+  code {
+    padding: 0 3px;
+    border-radius: 3px;
+    background: rgba(128, 128, 128, 0.15);
+    font-family: var(--dsw-alias-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 11.5px;
+  }
+}
