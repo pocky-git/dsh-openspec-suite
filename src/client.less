@@ -1,6 +1,5 @@
 // dsh-openspec-suite 客户端样式。
-// 所有界面样式统一放在这里，组件里只挂类名；
-// 少数纯动态的值（如进度条百分比宽度）以内联 style 的形式写在组件中。
+// 所有界面样式统一放在这里，组件里只挂类名。
 
 // ── 二级页面（覆盖在工作区浏览器区域上的总览页） ──────────────────────────
 
@@ -156,22 +155,6 @@
 .oss-plus-icon {
   font-size: 14px;
   line-height: 14px;
-}
-
-// ── 进度条 ────────────────────────────────────────────────────────────────
-
-.oss-bar {
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(128, 128, 128, 0.25);
-  overflow: hidden;
-  flex: 1;
-}
-
-.oss-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--dsw-alias-state-business-primary, #4d6bfe);
 }
 
 // ── 状态圆点（提案完成 / 进行中） ─────────────────────────────────────────
@@ -368,6 +351,53 @@
     background: var(--dsw-alias-interactive-bg-hover);
   }
 }
+
+// ── 阶段标签（提案 / 实施中 / 已归档） ────────────────────────────────────
+
+.oss-phase {
+  flex: none;
+  font-size: 10px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+  margin-left: 4px;
+
+  &.proposal {
+    background: rgba(77, 107, 254, 0.12);
+    color: var(--dsw-alias-state-business-primary, #4d6bfe);
+  }
+
+  &.applying {
+    background: rgba(229, 161, 61, 0.15);
+    color: #d18524;
+  }
+
+  &.archived {
+    background: rgba(128, 128, 128, 0.12);
+    color: var(--dsw-alias-label-secondary);
+  }
+}
+
+// 已归档的 change 行整体弱化。
+.oss-change.is-archived .oss-entry {
+  opacity: 0.75;
+}
+
+// ── 已归档折叠区 ──────────────────────────────────────────────────────────
+
+.oss-archived {
+  display: flex;
+  flex-direction: column;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(128, 128, 128, 0.3);
+}
+
+.oss-archived-head {
+  opacity: 0.8;
+}
+
 // ── 下拉列表行首的生成状态图标 ────────────────────────────────────────────
 
 .oss-file-status {

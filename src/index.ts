@@ -115,6 +115,10 @@ export interface OpenSpecChange {
   files: OpenSpecArtifactFile[]
   /** 本项目 schema.yaml 定义的期望产物（存在时），用于展示"缺失产物"。 */
   expected: OpenSpecExpectedArtifact[]
+  /** 生命周期阶段：提案（规划产物产出中）/ 实施（tasks 有勾选进度）/ 已归档。 */
+  phase: 'proposal' | 'applying' | 'archived'
+  /** 归档时间（ISO 日期，从归档目录名 YYYY-MM-DD-<name> 解析；仅已归档）。 */
+  archivedAt?: string
 }
 
 /** schema.yaml 中定义的一个产物阶段。 */
@@ -292,10 +296,13 @@ async function readChange(changeDir: string, changeName: string, schemaArtifacts
     id: artifact.id,
     satisfied: listed.some(({ rel }) => matchesGlob(rel, artifact.generates)),
   }))
-  return { name: changeName, artifacts, tasks: tasksProgress, files, expected }
+  // 阶段推导：tasks.md 出现勾选进度即进入实施阶段（归档由
+  // readProjectChanges 在目录层面判定并覆写）。
+  const phase: OpenSpecChange['phase'] = tasksProgress.done > 0 ? 'applying' : 'proposal'
+  return { name: changeName, artifacts, tasks: tasksProgress, files, expected, phase }
 }
 
-/** 汇总一个 openspec 项目的所有活跃（未归档）change。 */
+/** 汇总一个 openspec 项目的所有 change（活跃 + 已归档）。 */
 export async function readProjectChanges(projectDir: string, signal?: AbortSignal): Promise<OpenSpecChange[]> {
   const changesDir = join(projectDir, 'openspec', 'changes')
   let entries
@@ -308,10 +315,39 @@ export async function readProjectChanges(projectDir: string, signal?: AbortSigna
   const changes: OpenSpecChange[] = []
   for (const entry of entries) {
     if (signal?.aborted) break
-    if (!entry.isDirectory() || entry.name === 'archive') continue
+    if (!entry.isDirectory()) continue
+    if (entry.name === 'archive') {
+      // 归档区：openspec archive 的目录名惯例是 YYYY-MM-DD-<name>。
+      const archiveDir = join(changesDir, 'archive')
+      let archivedEntries
+      try {
+        archivedEntries = await fsp.readdir(archiveDir, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const archived of archivedEntries) {
+        if (signal?.aborted) break
+        if (!archived.isDirectory()) continue
+        const dateMatch = /^(\d{4}-\d{2}-\d{2})-(.+)$/u.exec(archived.name)
+        const change = await readChange(join(archiveDir, archived.name), dateMatch?.[2] ?? archived.name, schemaArtifacts, signal)
+        if (change !== null) {
+          change.phase = 'archived'
+          if (dateMatch !== null) change.archivedAt = dateMatch[1]
+          changes.push(change)
+        }
+      }
+      continue
+    }
     const change = await readChange(join(changesDir, entry.name), entry.name, schemaArtifacts, signal)
     if (change !== null) changes.push(change)
   }
+  // 归档时间倒序（最新在前），活跃提案保持目录序。
+  changes.sort((a, b) => {
+    if (a.phase !== 'archived' && b.phase !== 'archived') return 0
+    if (a.phase !== 'archived') return -1
+    if (b.phase !== 'archived') return 1
+    return (b.archivedAt ?? '').localeCompare(a.archivedAt ?? '')
+  })
   return changes
 }
 

@@ -52,6 +52,10 @@ interface OpenSpecChange {
   files: OpenSpecArtifactFile[];
   /** 本项目 schema.yaml 定义的期望产物（存在时），用于展示"缺失产物"。 */
   expected: OpenSpecExpectedArtifact[];
+  /** 生命周期阶段：提案（规划产物产出中）/ 实施（tasks 有勾选进度）/ 已归档。 */
+  phase: 'proposal' | 'applying' | 'archived';
+  /** 归档时间（ISO 日期，从归档目录名 YYYY-MM-DD-<name> 解析；仅已归档）。 */
+  archivedAt?: string;
 }
 /** schema.yaml 中定义的一个产物阶段。 */
 interface OpenSpecExpectedArtifact {
@@ -73,7 +77,7 @@ interface OpenSpecArtifactFile {
   /** 最后修改时间（ISO 字符串）。 */
   mtime: string;
 }
-/** 汇总一个 openspec 项目的所有活跃（未归档）change。 */
+/** 汇总一个 openspec 项目的所有 change（活跃 + 已归档）。 */
 declare function readProjectChanges(projectDir: string, signal?: AbortSignal): Promise<OpenSpecChange[]>;
 interface Config {
   scanDepth?: number;

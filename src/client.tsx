@@ -73,6 +73,10 @@ interface OpenSpecChangeWire {
   tasks: { done: number; total: number }
   files: OpenSpecArtifactFileWire[]
   expected: OpenSpecExpectedArtifactWire[]
+  /** 生命周期阶段。 */
+  phase: 'proposal' | 'applying' | 'archived'
+  /** 归档日期（YYYY-MM-DD；仅已归档）。 */
+  archivedAt?: string
 }
 
 interface ProjectWire {
@@ -287,9 +291,8 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
           <div className="oss-project-list">
             {projects.length === 0 && <div className="oss-muted">还没有导入项目。</div>}
             {projects.map((project) => {
-              const totalTasks = project.changes.reduce((sum, change) => sum + change.tasks.total, 0)
-              const doneTasks = project.changes.reduce((sum, change) => sum + change.tasks.done, 0)
-              const pct = totalTasks === 0 ? 0 : Math.round((doneTasks / totalTasks) * 100)
+              const active = project.changes.filter((c) => c.phase !== 'archived')
+              const archived = project.changes.filter((c) => c.phase === 'archived')
               return (
                 <div key={project.path} className="oss-card">
                   <div className="oss-row oss-project-head">
@@ -298,27 +301,25 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
                   </div>
                   <div className="oss-muted oss-ellipsis">{project.path}</div>
                   {!project.stillValid && <div className="oss-muted oss-warn">⚠ openspec/ 目录已不存在</div>}
-                  <div className="oss-row">
-                    <div className="oss-bar">
-                      <div className="oss-bar-fill" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="oss-muted oss-nowrap">{doneTasks}/{totalTasks} 任务 · {pct}%</span>
-                  </div>
-                  {project.changes.length === 0
-                    ? <div className="oss-muted">无活跃提案</div>
-                    : project.changes.map((change) => (
-                      <ChangeRow
-                        key={change.name}
-                        change={change}
-                        onOpenFile={(file, changeName) => {
-                          // 优先打开到 dsh-better-sidebar 编辑器；不可用时
-                          // 回退应用内预览浮层。
-                          if (!openInBetterSidebar(file.path, `${changeName}/${file.label}`)) {
-                            setPreview({ change: changeName, file, projectPath: project.path })
-                          }
-                        }}
-                      />
-                    ))}
+                  {active.length === 0 && archived.length === 0 && <div className="oss-muted">无提案</div>}
+                  {active.map((change) => (
+                    <ChangeRow
+                      key={change.name}
+                      change={change}
+                      onOpenFile={(file, changeName) => {
+                        // 优先打开到 dsh-better-sidebar 编辑器；不可用时
+                        // 回退应用内预览浮层。
+                        if (!openInBetterSidebar(file.path, `${changeName}/${file.label}`)) {
+                          setPreview({ change: changeName, file, projectPath: project.path })
+                        }
+                      }}
+                    />
+                  ))}
+                  {archived.length > 0 && <ArchivedSection changes={archived} onOpenFile={(file, changeName) => {
+                    if (!openInBetterSidebar(file.path, `${changeName}/${file.label}`)) {
+                      setPreview({ change: changeName, file, projectPath: project.path })
+                    }
+                  }} />}
                 </div>
               )
             })}
@@ -501,14 +502,45 @@ function buildArtifactRows(change: OpenSpecChangeWire): ArtifactRow[] {
   return rows
 }
 
-/** 单个 change 卡片行：可展开产物下拉列表，点击已生成文件进入预览。 */
+/** 阶段标签文案。 */
+function phaseLabel(change: OpenSpecChangeWire): string {
+  if (change.phase === 'archived') return change.archivedAt !== undefined ? `已归档 ${change.archivedAt}` : '已归档'
+  if (change.phase === 'applying') return '实施中'
+  return '提案阶段'
+}
+
+/** 已归档提案的折叠区（默认收起）。 */
+function ArchivedSection(props: { changes: OpenSpecChangeWire[]; onOpenFile: (file: OpenSpecArtifactFileWire, change: string) => void }): React.ReactElement {
+  const [open, setOpen] = React.useState(false)
+  return (
+    <div className="oss-archived">
+      <div
+        className="oss-entry oss-entry-clickable oss-archived-head"
+        role="button"
+        tabIndex={0}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((v) => !v) } }}
+      >
+        <span className={`oss-caret ${open ? 'is-open' : ''}`}>
+          <IconChevronRightOutline12 size={12} />
+        </span>
+        <span className="oss-muted" style={{ flex: 1, minWidth: 0 }}>已归档（{props.changes.length}）</span>
+      </div>
+      {open && props.changes.map((change) => (
+        <ChangeRow key={change.name} change={change} onOpenFile={props.onOpenFile} />
+      ))}
+    </div>
+  )
+}
+
+/** 单个 change 卡片行：阶段标签 + 可展开产物下拉列表。 */
 function ChangeRow(props: { change: OpenSpecChangeWire; onOpenFile: (file: OpenSpecArtifactFileWire, change: string) => void }): React.ReactElement {
   const [expanded, setExpanded] = React.useState(false)
   const { change } = props
   const rows = buildArtifactRows(change)
   const hasContent = rows.length > 0
   return (
-    <div className="oss-change">
+    <div className={`oss-change ${change.phase === 'archived' ? 'is-archived' : ''}`}>
       <div
         className="oss-entry oss-entry-clickable"
         onClick={() => { if (hasContent) setExpanded((v) => !v) }}
@@ -521,9 +553,10 @@ function ChangeRow(props: { change: OpenSpecChangeWire; onOpenFile: (file: OpenS
           <IconChevronRightOutline12 size={12} />
         </span>
         <span className="oss-ellipsis" style={{ flex: 1, minWidth: 0 }}>{change.name}</span>
-        <span className="oss-muted oss-nowrap">
-          {change.tasks.total > 0 ? `(${change.tasks.done}/${change.tasks.total}) ` : ''}
-        </span>
+        {change.tasks.total > 0 && (
+          <span className="oss-muted oss-nowrap">{change.tasks.done}/{change.tasks.total}</span>
+        )}
+        <span className={`oss-phase ${change.phase}`}>{phaseLabel(change)}</span>
       </div>
       {expanded && (
         <div className="oss-files">
