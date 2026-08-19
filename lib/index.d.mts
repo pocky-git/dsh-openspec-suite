@@ -11,6 +11,8 @@ declare module '@deepseek-ai/cordis' {
     webServer: import('@deepseek-ai/dsh-host-webserver').WebServer;
     /** 设置服务。 */
     settings: import('@deepseek-ai/dsh-settings').SettingsProvider;
+    /** Agent 注册表（dsh-agent，由 dsh-base 挂载）。 */
+    agents?: import('@deepseek-ai/dsh-agent').AgentRegistry;
   }
 }
 //#endregion
@@ -33,27 +35,29 @@ interface OpenSpecProject {
  * `openspec/changes/` 的目录。
  */
 declare function scanOpenspecProjects(rootDir: string, signal?: AbortSignal, maxDepth?: number): Promise<OpenSpecProject[]>;
+/**
+ * 提案生命周期状态：
+ * - designing 方案设计中（schema 产物尚有缺口）
+ * - ready     待实施（产物齐全、任务未开工）
+ * - applying  实施中（任务有勾选进度但未完成）
+ * - done      待归档（任务全部完成、尚未归档）
+ * - archived  已归档
+ */
+type ChangeStatus = 'designing' | 'ready' | 'applying' | 'done' | 'archived';
 /** 一个变更提案及其产物/任务进度。 */
 interface OpenSpecChange {
   name: string;
-  /** 已存在的产物：proposal / design / specs / tasks。 */
-  artifacts: {
-    proposal: boolean;
-    design: boolean;
-    specs: boolean;
-    tasks: boolean;
-  };
+  /** 生命周期状态。 */
+  status: ChangeStatus;
   /** tasks.md 中已勾选 / 总复选框数（文件缺失时为 0/0）。 */
   tasks: {
     done: number;
     total: number;
   };
-  /** 产物文件清单（含 specs/ 下的能力规格文件），按固定产物顺序排列。 */
+  /** 产物文件清单（仅 schema.yaml 定义且已生成的产物），按 schema 顺序排列。 */
   files: OpenSpecArtifactFile[];
-  /** 本项目 schema.yaml 定义的期望产物（存在时），用于展示"缺失产物"。 */
+  /** 本项目 schema.yaml 定义的期望产物，用于展示"缺失产物"。 */
   expected: OpenSpecExpectedArtifact[];
-  /** 生命周期阶段：提案（规划产物产出中）/ 实施（tasks 有勾选进度）/ 已归档。 */
-  phase: 'proposal' | 'applying' | 'archived';
   /** 归档时间（ISO 日期，从归档目录名 YYYY-MM-DD-<name> 解析；仅已归档）。 */
   archivedAt?: string;
 }
@@ -66,7 +70,7 @@ interface OpenSpecExpectedArtifact {
 }
 /** change 目录下的一个可预览产物文件。 */
 interface OpenSpecArtifactFile {
-  /** 产物类别：schema 产物 id，或 'file'（schema 之外/未知来源的文件）。 */
+  /** 产物类别：schema 产物 id。 */
   kind: string;
   /** 展示名：proposal.md / design.html / specs/<capability>/spec.md。 */
   label: string;
@@ -85,4 +89,4 @@ interface Config {
 declare const Config: z<Config>;
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { Config, OpenSpecArtifactFile, OpenSpecChange, OpenSpecExpectedArtifact, OpenSpecProject, apply, inject, name, readProjectChanges, scanOpenspecProjects };
+export { ChangeStatus, Config, OpenSpecArtifactFile, OpenSpecChange, OpenSpecExpectedArtifact, OpenSpecProject, apply, inject, name, readProjectChanges, scanOpenspecProjects };

@@ -104,19 +104,27 @@ export async function scanOpenspecProjects(rootDir: string, signal?: AbortSignal
 
 // ── 提案进度 ────────────────────────────────────────────────────────────────
 
+/**
+ * 提案生命周期状态：
+ * - designing 方案设计中（schema 产物尚有缺口）
+ * - ready     待实施（产物齐全、任务未开工）
+ * - applying  实施中（任务有勾选进度但未完成）
+ * - done      待归档（任务全部完成、尚未归档）
+ * - archived  已归档
+ */
+export type ChangeStatus = 'designing' | 'ready' | 'applying' | 'done' | 'archived'
+
 /** 一个变更提案及其产物/任务进度。 */
 export interface OpenSpecChange {
   name: string
-  /** 已存在的产物：proposal / design / specs / tasks。 */
-  artifacts: { proposal: boolean; design: boolean; specs: boolean; tasks: boolean }
+  /** 生命周期状态。 */
+  status: ChangeStatus
   /** tasks.md 中已勾选 / 总复选框数（文件缺失时为 0/0）。 */
   tasks: { done: number; total: number }
-  /** 产物文件清单（含 specs/ 下的能力规格文件），按固定产物顺序排列。 */
+  /** 产物文件清单（仅 schema.yaml 定义且已生成的产物），按 schema 顺序排列。 */
   files: OpenSpecArtifactFile[]
-  /** 本项目 schema.yaml 定义的期望产物（存在时），用于展示"缺失产物"。 */
+  /** 本项目 schema.yaml 定义的期望产物，用于展示"缺失产物"。 */
   expected: OpenSpecExpectedArtifact[]
-  /** 生命周期阶段：提案（规划产物产出中）/ 实施（tasks 有勾选进度）/ 已归档。 */
-  phase: 'proposal' | 'applying' | 'archived'
   /** 归档时间（ISO 日期，从归档目录名 YYYY-MM-DD-<name> 解析；仅已归档）。 */
   archivedAt?: string
 }
@@ -131,7 +139,7 @@ export interface OpenSpecExpectedArtifact {
 
 /** change 目录下的一个可预览产物文件。 */
 export interface OpenSpecArtifactFile {
-  /** 产物类别：schema 产物 id，或 'file'（schema 之外/未知来源的文件）。 */
+  /** 产物类别：schema 产物 id。 */
   kind: string
   /** 展示名：proposal.md / design.html / specs/<capability>/spec.md。 */
   label: string
@@ -223,8 +231,6 @@ function globToRegExp(pattern: string): RegExp {
 /** 判断相对路径（change 目录内）是否匹配某个 generates 模式。 */
 function matchesGlob(relPath: string, generates: string): boolean {
   if (generates === '') return false
-  // "specs/**/*.md" 应同时匹配 "specs/a/spec.md"（** 跨目录）；
-  // 也接受目录前缀式匹配（specs/x → specs/x/...）
   return globToRegExp(generates).test(relPath)
 }
 
@@ -260,46 +266,50 @@ async function listChangeFilesRecursively(changeDir: string, signal?: AbortSigna
 
 /** 读取一个 change 目录并汇总为进度摘要。 */
 async function readChange(changeDir: string, changeName: string, schemaArtifacts: Array<{ id: string; generates: string }>, signal?: AbortSignal): Promise<OpenSpecChange | null> {
-  const artifacts = { proposal: false, design: false, specs: false, tasks: false }
   let tasksProgress = { done: 0, total: 0 }
   const listed = await listChangeFilesRecursively(changeDir, signal)
   if (signal?.aborted) return null
   // schema 产物匹配：把每个文件归到第一个匹配的 artifact id 上。
-  const kindByRel = new Map<string, string>()
-  for (const { rel } of listed) {
-    for (const artifact of schemaArtifacts) {
+  // 产物列表只包含 schema.yaml 定义的产物；schema 之外的文件不展示。
+  const files: OpenSpecArtifactFile[] = []
+  const matchedRels = new Set<string>()
+  for (const artifact of schemaArtifacts) {
+    for (const { rel, path, stat } of listed) {
+      if (matchedRels.has(rel)) continue
       if (matchesGlob(rel, artifact.generates)) {
-        kindByRel.set(rel, artifact.id)
-        break
+        matchedRels.add(rel)
+        files.push({ kind: artifact.id, label: rel, path, ...stat })
       }
     }
   }
-  const files: OpenSpecArtifactFile[] = listed.map(({ rel, path, stat }) => ({
-    kind: kindByRel.get(rel) ?? 'file',
-    label: rel,
-    path,
-    ...stat,
-  }))
-  // 经典四产物布尔值（与 schema 无关，保留给旧 UI/进度计算）。
-  for (const { rel, path } of listed) {
-    if (rel === 'proposal.md') artifacts.proposal = true
-    else if (rel === 'design.md' || rel === 'design.html') artifacts.design = true
-    else if (rel === 'tasks.md') {
-      artifacts.tasks = true
-      try {
-        tasksProgress = parseTasks(await fsp.readFile(path, 'utf8'))
-      } catch { /* tasks.md 读不出来仍视为已存在 */ }
-    } else if (rel.startsWith('specs/') && rel.endsWith('.md')) artifacts.specs = true
-  }
+  files.sort((a, b) => {
+    const orderA = schemaArtifacts.findIndex((a2) => a2.id === a.kind)
+    const orderB = schemaArtifacts.findIndex((b2) => b2.id === b.kind)
+    return orderA === orderB ? a.label.localeCompare(b.label) : orderA - orderB
+  })
   // schema 期望产物满足状态。
   const expected: OpenSpecExpectedArtifact[] = schemaArtifacts.map((artifact) => ({
     id: artifact.id,
     satisfied: listed.some(({ rel }) => matchesGlob(rel, artifact.generates)),
   }))
-  // 阶段推导：tasks.md 出现勾选进度即进入实施阶段（归档由
-  // readProjectChanges 在目录层面判定并覆写）。
-  const phase: OpenSpecChange['phase'] = tasksProgress.done > 0 ? 'applying' : 'proposal'
-  return { name: changeName, artifacts, tasks: tasksProgress, files, expected, phase }
+  // tasks.md 勾选进度（tasks 产物可能是 tasks.md 或其他自定义名）。
+  const tasksArtifact = schemaArtifacts.find((a) => a.id === 'tasks')
+  const tasksFile = tasksArtifact !== undefined
+    ? listed.find(({ rel }) => matchesGlob(rel, tasksArtifact.generates))
+    : undefined
+  if (tasksFile !== undefined) {
+    try {
+      tasksProgress = parseTasks(await fsp.readFile(tasksFile.path, 'utf8'))
+    } catch { /* tasks 文件读不出来按 0/0 处理 */ }
+  }
+  // 状态推导（归档由 readProjectChanges 在目录层面判定并覆写）。
+  const allSatisfied = expected.every((e) => e.satisfied)
+  let status: ChangeStatus
+  if (tasksProgress.total > 0 && tasksProgress.done >= tasksProgress.total) status = 'done'
+  else if (tasksProgress.done > 0) status = 'applying'
+  else if (allSatisfied) status = 'ready'
+  else status = 'designing'
+  return { name: changeName, status, tasks: tasksProgress, files, expected }
 }
 
 /** 汇总一个 openspec 项目的所有 change（活跃 + 已归档）。 */
@@ -331,7 +341,7 @@ export async function readProjectChanges(projectDir: string, signal?: AbortSigna
         const dateMatch = /^(\d{4}-\d{2}-\d{2})-(.+)$/u.exec(archived.name)
         const change = await readChange(join(archiveDir, archived.name), dateMatch?.[2] ?? archived.name, schemaArtifacts, signal)
         if (change !== null) {
-          change.phase = 'archived'
+          change.status = 'archived'
           if (dateMatch !== null) change.archivedAt = dateMatch[1]
           changes.push(change)
         }
@@ -343,9 +353,9 @@ export async function readProjectChanges(projectDir: string, signal?: AbortSigna
   }
   // 归档时间倒序（最新在前），活跃提案保持目录序。
   changes.sort((a, b) => {
-    if (a.phase !== 'archived' && b.phase !== 'archived') return 0
-    if (a.phase !== 'archived') return -1
-    if (b.phase !== 'archived') return 1
+    if (a.status !== 'archived' && b.status !== 'archived') return 0
+    if (a.status !== 'archived') return -1
+    if (b.status !== 'archived') return 1
     return (b.archivedAt ?? '').localeCompare(a.archivedAt ?? '')
   })
   return changes
@@ -478,6 +488,74 @@ export function apply(ctx: Context, config: Config): void {
       return value
     }
 
+    // ── 提案 → 会话绑定（标记文件方案） ─────────────────────────────
+    //
+    // 绑定权威存储 = 提案目录内的 .dsh-session 隐藏文件（内容为会话
+    // id）。随提案目录走（归档移动也带着），不依赖宿主设置持久化。
+    //
+    // 写入时机：点“创建提案”→ 新会话就绪后记录待绑定 (项目路径 →
+    // {会话 id, 点击时刻})。此后任何一次 overview 扫描 / 定位查询，
+    // 都会做惰性对账：该项目下 birthtime 晚于点击时刻、且尚无标记
+    // 文件的提案目录 = 那次创建的产物，直接写入标记文件。
+    // （/openspec-new-change 命令只是预填草稿，提案目录要等 agent
+    // 执行后才出现，所以绑定必然是延迟完成的。）
+    //
+    // 定位优先级：标记文件 → 第一条会话兜底。标记指向的会话不在
+    // 项目会话列表里时视为失效，忽略标记。
+    const pendingChangeSession = new Map<string, { sessionId: string; since: number }>()
+
+    /** 提案目录内绑定标记文件的文件名。 */
+    const MARKER_FILENAME = '.dsh-session'
+
+    /** 读取提案目录的绑定标记；不存在/不可读返回 undefined。 */
+    const readChangeMarker = async (changeDir: string): Promise<string | undefined> => {
+      try {
+        const content = await fsp.readFile(join(changeDir, MARKER_FILENAME), 'utf8')
+        const trimmed = content.trim()
+        return trimmed === '' ? undefined : trimmed
+      } catch {
+        return undefined
+      }
+    }
+
+    /** 把绑定标记写入提案目录（原子写，失败静默——下次对账重试）。 */
+    const writeChangeMarker = async (changeDir: string, sessionId: string): Promise<void> => {
+      try {
+        await fsp.writeFile(join(changeDir, MARKER_FILENAME), `${sessionId}\n`, 'utf8')
+      } catch { /* 目录可能已被归档/删除 */ }
+    }
+
+    /**
+     * 惰性对账：为 pending 里每个项目，把“点击时刻之后新建且尚无
+     * 标记”的提案目录绑给点击时创建的会话。birthtime（目录创建
+     * 时间）晚于点击时刻 = 那次创建的产物，毫秒级精确，不受提案名
+     * 启发式影响。只绑定一个（最新的那个）——一次点击只创建一个
+     * 提案；绑到了才清待绑定，目录还没出现就保留到下次。
+     */
+    const reconcilePendingBindings = async (projects: Array<{ path: string; changes: OpenSpecChange[] }>): Promise<void> => {
+      for (const [projectPath, pending] of pendingChangeSession) {
+        const project = projects.find((p) => p.path === projectPath)
+        if (project === undefined) continue
+        // 候选：birthtime 晚于点击时刻的活跃提案目录（归档的不算，
+        // 点击时还没归档的历史提案 birthtime 必然早于点击时刻）。
+        const candidates: Array<{ name: string; bornAt: number }> = []
+        for (const change of project.changes) {
+          if (change.status === 'archived') continue
+          try {
+            const stat = await fsp.stat(join(projectPath, 'openspec', 'changes', change.name))
+            if (!stat.isDirectory()) continue
+            if (stat.birthtimeMs > pending.since) candidates.push({ name: change.name, bornAt: stat.birthtimeMs })
+          } catch { /* 目录消失，跳过 */ }
+        }
+        if (candidates.length === 0) continue
+        // 最新出生的目录 = 这次点击的产物（同一次 agent 回合只建一个）。
+        candidates.sort((a, b) => b.bornAt - a.bornAt)
+        const target = candidates[0]!
+        await writeChangeMarker(join(projectPath, 'openspec', 'changes', target.name), pending.sessionId)
+        pendingChangeSession.delete(projectPath)
+      }
+    }
+
     ctx.effect(() => ctx.webServer.register({
       kind: 'prefix',
       path: '/openspec/api',
@@ -574,56 +652,6 @@ export function apply(ctx: Context, config: Config): void {
               writeOk(res, { path: path ?? null })
               return
             }
-            case 'diag': {
-              // 临时诊断接口：为什么父目录扫描什么都找不到？
-              const dir = requireString(body, 'path')
-              const report: Record<string, unknown> = { dir }
-              try {
-                const stat = await fsp.stat(dir)
-                report.stat = { isDirectory: stat.isDirectory(), mode: stat.mode }
-              } catch (error) {
-                report.statError = error instanceof Error ? error.message : String(error)
-              }
-              try {
-                const entries = await fsp.readdir(dir, { withFileTypes: true })
-                report.entryCount = entries.length
-                report.firstEntries = entries.slice(0, 8).map((entry) => ({
-                  name: entry.name,
-                  isDirectory: entry.isDirectory(),
-                  isSymbolicLink: entry.isSymbolicLink(),
-                }))
-                // 按扫描的同样方式探测一个指定名字的子目录（或第一个可扫描目录）
-                const wanted = typeof body.probeName === 'string' && body.probeName !== '' ? body.probeName : undefined
-                const probe = entries.find((entry) => entry.isDirectory() && !SKIP_DIRS.has(entry.name) && (wanted === undefined || entry.name === wanted))
-                if (probe !== undefined) {
-                  const child = join(dir, probe.name)
-                  report.probe = { name: probe.name, path: child, isOpenspec: await isOpenspecProject(child) }
-                  try {
-                    const childStat = await fsp.stat(child)
-                    report.probe.statIsDirectory = childStat.isDirectory()
-                  } catch (error) {
-                    report.probe.statError = error instanceof Error ? error.message : String(error)
-                  }
-                }
-              } catch (error) {
-                report.readdirError = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error)
-              }
-              // 重新运行一遍完全相同的扫描路径并追踪其行为
-              try {
-                const subdirs = await listSubdirectories(dir, MAX_SCAN_DEPTH)
-                report.subdirCount = subdirs.length
-                report.subdirSample = subdirs.slice(0, 12)
-                const matches = []
-                for (const child of subdirs) {
-                  if (await isOpenspecProject(child)) matches.push(child)
-                }
-                report.scanMatches = matches
-              } catch (error) {
-                report.scanTraceError = error instanceof Error ? `${error.code ?? ''} ${error.message}\n${error.stack ?? ''}` : String(error)
-              }
-              writeOk(res, report)
-              return
-            }
             case 'scanAndImportAll': {
               // （递归）扫描选定的根目录并导入其下的所有 openspec
               // 项目——选定的文件夹本身不
@@ -659,22 +687,7 @@ export function apply(ctx: Context, config: Config): void {
               const rootDir = requireString(body, 'path')
               const projects = await scanOpenspecProjects(rootDir)
               await updatePrefs({ ...readPrefs(), lastScanRoot: rootDir })
-              // 找不到项目时附带诊断信息，让"为什么没探测到我的
-              // 项目"可以直接从传输层回答
-              let diag: Record<string, unknown> | undefined
-              if (projects.length === 0) {
-                diag = { node: process.version }
-                try {
-                  const entries = await fsp.readdir(rootDir, { withFileTypes: true })
-                  diag.entryCount = entries.length
-                  diag.dirNames = entries.filter((entry) => entry.isDirectory()).slice(0, 10).map((entry) => entry.name)
-                  diag.readdirWorks = true
-                } catch (error) {
-                  diag.readdirWorks = false
-                  diag.readdirError = error instanceof Error ? `${error.code ?? ''} ${error.message}` : String(error)
-                }
-              }
-              writeOk(res, { root: rootDir, projects, ...(diag !== undefined ? { diag } : {}) })
+              writeOk(res, { root: rootDir, projects })
               return
             }
             case 'import': {
@@ -714,14 +727,6 @@ export function apply(ctx: Context, config: Config): void {
                 changes: await readProjectChanges(ws.path),
                 isOpenspec: await isOpenspecProject(ws.path),
               })))
-              const openspecProjects = all
-                .filter((entry) => entry.isOpenspec)
-                .map((entry) => ({
-                  path: entry.ws.path,
-                  name: entry.ws.title || basename(entry.ws.path) || entry.ws.path,
-                  stillValid: entry.isOpenspec,
-                  changes: entry.changes,
-                }))
               // 把偏好对账成注册表路径的忠实缓存，这样从侧边栏一侧
               // 删除的工作区在这里也会消失。
               const registryPaths = new Set(workspaces.map((ws) => ws.path))
@@ -732,6 +737,32 @@ export function apply(ctx: Context, config: Config): void {
               }
               if (reconciled.length !== prefs.projects.length || reconciled.some((p, i) => p !== prefs.projects[i])) {
                 await updatePrefs({ ...prefs, projects: reconciled })
+              }
+              const openspecProjects = all
+                .filter((entry) => entry.isOpenspec)
+                .map((entry) => ({
+                  path: entry.ws.path,
+                  name: entry.ws.title || basename(entry.ws.path) || entry.ws.path,
+                  workspaceId: entry.ws.id,
+                  sessionIds: [...entry.ws.sessionIds],
+                  stillValid: entry.isOpenspec,
+                  changes: entry.changes,
+                }))
+              // 待绑定对账（birthtime 配对，见 reconcilePendingBindings）。
+              // 之后再读一次标记，让刚落盘的绑定立即出现在响应里。
+              await reconcilePendingBindings(openspecProjects)
+              const markers = await Promise.all(openspecProjects.map(async (project) => {
+                const map: Record<string, string> = {}
+                for (const change of project.changes) {
+                  const marker = await readChangeMarker(join(project.path, 'openspec', 'changes', change.name))
+                  if (marker !== undefined) map[change.name] = marker
+                }
+                return map
+              }))
+              let index = 0
+              for (const project of openspecProjects) {
+                ;(project as { changeSessions: Record<string, string> }).changeSessions = markers[index]!
+                index += 1
               }
               writeOk(res, { projects: openspecProjects })
               return
@@ -750,6 +781,48 @@ export function apply(ctx: Context, config: Config): void {
               if (check.error !== undefined) { writeError(res, check.error.code, check.error.message, check.error.status); return }
               const content = await fsp.readFile(filePath, 'utf8')
               writeOk(res, { path: filePath, bytes: check.stat!.bytes, mtime: check.stat!.mtime, content })
+              return
+            }
+            case 'raw.url': {
+              // 把产物绝对路径解析成 /openspec/api/raw/ 的预览 URL：
+              // 找到拥有它的已注册工作区，用其 openspec/ 内相对路径构造
+              // URL，iframe 内的相对引用（../../mermaid.min.js）会相对
+              // 该 URL 正确解析。供 better-sidebar 上的 HTML 预览器使用。
+              const filePath = requireString(body, 'path')
+              const ws = ctx.workspaceRegistry.list().find((w) => filePath.startsWith(join(w.path, 'openspec') + '/'))
+              if (ws === undefined) {
+                writeError(res, 'forbidden', 'path is outside any registered workspace openspec/ directory', 403)
+                return
+              }
+              if (!isPreviewablePath(filePath)) {
+                writeError(res, 'forbidden', 'file type not previewable', 403)
+                return
+              }
+              const check = await checkPreviewableFile(ctx, filePath)
+              if (check.error !== undefined) { writeError(res, check.error.code, check.error.message, check.error.status); return }
+              const relPath = filePath.slice(join(ws.path, 'openspec').length + 1)
+              const wsId = Buffer.from(ws.path, 'utf8').toString('base64')
+              writeOk(res, { url: `/openspec/api/raw/${encodeURIComponent(wsId)}/${relPath.split('/').map(encodeURIComponent).join('/')}` })
+              return
+            }
+            case 'changeSession.bind': {
+              // 记录“点击创建提案 → 新建会话”的待绑定：提案目录出现
+              // 后由对账（birthtime 晚于点击时刻的目录）写入标记文件。
+              const projectPath = requireString(body, 'projectPath')
+              const sessionId = requireString(body, 'sessionId')
+              pendingChangeSession.set(projectPath, { sessionId, since: Date.now() })
+              writeOk(res, { projectPath, sessionId })
+              return
+            }
+            case 'changeSession.get': {
+              // 查询提案绑定的会话 id：先做一次待绑定对账（提案目录
+              // 可能刚刚出现），再读标记文件。无绑定返回 null。
+              const projectPath = requireString(body, 'projectPath')
+              const changeName = requireString(body, 'changeName')
+              const changes = await readProjectChanges(projectPath).catch(() => [])
+              await reconcilePendingBindings([{ path: projectPath, changes }])
+              const marker = await readChangeMarker(join(projectPath, 'openspec', 'changes', changeName))
+              writeOk(res, { sessionId: marker ?? null })
               return
             }
             default:

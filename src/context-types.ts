@@ -14,6 +14,8 @@ declare module '@deepseek-ai/cordis' {
     webServer: import('@deepseek-ai/dsh-host-webserver').WebServer
     /** 设置服务。 */
     settings: import('@deepseek-ai/dsh-settings').SettingsProvider
+    /** Agent 注册表（dsh-agent，由 dsh-base 挂载）。 */
+    agents?: import('@deepseek-ai/dsh-agent').AgentRegistry
   }
 }
 

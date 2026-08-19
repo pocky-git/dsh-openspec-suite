@@ -157,23 +157,6 @@
   line-height: 14px;
 }
 
-// ── 状态圆点（提案完成 / 进行中） ─────────────────────────────────────────
-
-.oss-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-
-  &.is-done {
-    background: #30a46c;
-  }
-
-  &.is-doing {
-    background: #e5a13d;
-  }
-}
-
 // ── 目录选择器（应用内浏览降级方案） ──────────────────────────────────────
 
 .oss-picker {
@@ -352,30 +335,13 @@
   }
 }
 
-// ── 阶段标签（提案 / 实施中 / 已归档） ────────────────────────────────────
+// 提案名称（点击定位会话）：可点击但保持普通文本观感。
+.oss-change-name {
+  cursor: pointer;
 
-.oss-phase {
-  flex: none;
-  font-size: 10px;
-  line-height: 16px;
-  padding: 0 6px;
-  border-radius: 8px;
-  white-space: nowrap;
-  margin-left: 4px;
-
-  &.proposal {
-    background: rgba(77, 107, 254, 0.12);
+  &:hover {
     color: var(--dsw-alias-state-business-primary, #4d6bfe);
-  }
-
-  &.applying {
-    background: rgba(229, 161, 61, 0.15);
-    color: #d18524;
-  }
-
-  &.archived {
-    background: rgba(128, 128, 128, 0.12);
-    color: var(--dsw-alias-label-secondary);
+    text-decoration: underline;
   }
 }
 

@@ -6,8 +6,9 @@
  *    窄/rail 模式下仅显示图标）。点击后打开 OpenSpec 总览页（见 2）。
  * 2. 总览页本身是左侧边栏内的一个二级页面：一个覆盖工作区浏览区域
  *    （区域标题 + 会话列表）的浮层，拥有自己的头部（“← 返回” + 标题）
- *    以及已导入项目的只读列表（含每个提案的进度）。项目的增删通过宿主
- *    的工作区管理进行；导入操作在别处完成。
+ *    以及已导入项目的只读列表。每个项目带“创建提案”按钮（新建会话并
+ *    预填 /openspec-new-change 命令）；每个提案行点击行首定位到该
+ *    提案的会话，展开可查看产物清单；已归档提案保留归档日期。
  *
  * 通过同源的 `/openspec/api/*` JSON 信封（{ok, value} / {ok:false, error}）
  * 与宿主部分通信。
@@ -19,11 +20,13 @@
 export const name = 'dsh-openspec-suite/client'
 
 /**
- * 必选依赖 dsh-better-sidebar：dsh web 运行时不支持 'xxx?' 可选注入
- * 语法（会把 'betterSidebar?' 当成字面服务名等待，导致插件永远
- * pending）。未安装该插件时本客户端半不激活。
+ * 必选依赖：dsh-better-sidebar（产物打开到侧栏编辑器 + 注册 HTML
+ * 预览器）、dsh-client-runtime 的 sessions / workspaces（会话定位与
+ * 新建提案会话）。dsh web 运行时不支持 'xxx?' 可选注入语法（会把
+ * 'xxx?' 当成字面服务名等待，导致插件永远 pending），所以要么必选
+ * 要么运行时 ctx.get 懒读。conversation 服务用 ctx.get 懒读。
  */
-export const inject = ['betterSidebar']
+export const inject = ['betterSidebar', 'sessions', 'workspaces']
 
 import * as React from 'react'
 import * as ReactDOMClient from 'react-dom/client'
@@ -31,23 +34,58 @@ import type { Context } from './client-context.ts'
 import './client.less'
 
 /**
- * 当前插件上下文（apply 时捕获）。用于跨插件服务调用——目前是
- * dsh-better-sidebar 的 ctx.betterSidebar.openFile（把产物打开到
- * 侧栏编辑器）。未安装该插件时为 undefined，回退内置预览。
+ * 当前插件上下文（apply 时捕获）。用于跨插件服务调用——dsh-better-sidebar
+ * 的 ctx.betterSidebar.openFile（把产物打开到侧栏编辑器）、dsh-client-runtime
+ * 的 ctx.sessions / ctx.workspaces（会话定位与新建提案会话）。
  */
 let pluginContext: Context | undefined
 
+/** 提案的会话定位：打开该会话并返回其 id。 */
+function openSession(sessionId: string): boolean {
+  const ctx = pluginContext
+  if (ctx === undefined) return false
+  try {
+    ctx.sessions.open(sessionId)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
- * 尝试把文件打开到 dsh-better-sidebar 的编辑器 tab。成功打开返回
- * true；插件未安装/服务不可用/无活动会话返回 false（调用方回退）。
+ * 为当前打开的会话预填 composer 草稿（如 /openspec-new-change）。
+ * 会话必须刚被 sessions.open 选中。成功返回 true。
+ */
+function prefillDraft(text: string): boolean {
+  const ctx = pluginContext
+  if (ctx === undefined) return false
+  try {
+    const current = ctx.sessions.list.getSnapshot().current
+    if (current === undefined) return false
+    const scoped = ctx.sessions.scope(current)
+    if (scoped === undefined) return false
+    // conversation 是跨插件服务：inject 声明属 dsh-client-ui-conversation
+    // 的消费面，这里按 better-sidebar 的同款模式用 ctx.get 懒读。
+    const conversation = ctx.get('conversation') as { input: { for(actx: unknown): { setDraft(t: string): void } } } | undefined
+    if (conversation === undefined) return false
+    conversation.input.for(scoped).setDraft(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 把文件打开到 dsh-better-sidebar 的编辑器 tab。成功打开返回
+ * true；无活动会话或调用失败返回 false（调用方回退应用内预览）。
  */
 function openInBetterSidebar(path: string, title: string): boolean {
-  const service = pluginContext?.betterSidebar
-  if (service === undefined || typeof service.openFile !== 'function') return false
+  const ctx = pluginContext
+  if (ctx === undefined) return false
   try {
-    const sessionId = service.getSnapshot().sessionId
+    const sessionId = ctx.betterSidebar.getSnapshot().sessionId
     if (sessionId === undefined || sessionId === '') return false
-    service.openFile({ sessionId }, path, title)
+    ctx.betterSidebar.openFile({ sessionId }, path, title)
     return true
   } catch {
     return false
@@ -67,14 +105,15 @@ interface OpenSpecExpectedArtifactWire {
   satisfied: boolean
 }
 
+/** 提案生命周期状态（与宿主 ChangeStatus 对应）。 */
+type ChangeStatusWire = 'designing' | 'ready' | 'applying' | 'done' | 'archived'
+
 interface OpenSpecChangeWire {
   name: string
-  artifacts: { proposal: boolean; design: boolean; specs: boolean; tasks: boolean }
+  status: ChangeStatusWire
   tasks: { done: number; total: number }
   files: OpenSpecArtifactFileWire[]
   expected: OpenSpecExpectedArtifactWire[]
-  /** 生命周期阶段。 */
-  phase: 'proposal' | 'applying' | 'archived'
   /** 归档日期（YYYY-MM-DD；仅已归档）。 */
   archivedAt?: string
 }
@@ -82,8 +121,13 @@ interface OpenSpecChangeWire {
 interface ProjectWire {
   path: string
   name: string
+  workspaceId: string
+  /** 该工作区下已登记的会话（新建/最早在前）。 */
+  sessionIds: string[]
   stillValid: boolean
   changes: OpenSpecChangeWire[]
+  /** 提案名 → 绑定会话 id（来自提案目录内的 .dsh-session 标记）。 */
+  changeSessions: Record<string, string>
 }
 
 interface ImportAllResult {
@@ -179,6 +223,38 @@ function useSuiteState(): SuiteState {
   return state
 }
 
+// ── 提案 → 会话匹配 ─────────────────────────────────────────────────────────
+
+/**
+ * 从项目会话列表中找出该提案对应的会话：
+ * 1. overview 带回的绑定标记（提案目录内 .dsh-session 文件），
+ *    绑定仍在本项目会话列表内才有效；
+ * 2. overview 数据里没有时（例如提案目录刚出现、总览页还没重新
+ *    加载），向宿主查一次 changeSession.get——宿主会先做待绑定
+ *    对账再读标记文件；
+ * 3. 回退第一个会话（绑定不存在或已失效时）；
+ * 4. 没有任何会话则 undefined。
+ */
+async function findChangeSession(project: ProjectWire, changeName: string): Promise<string | undefined> {
+  if (project.sessionIds.length === 0) return undefined
+  const tryBound = (sessionId: string): string | undefined =>
+    project.sessionIds.includes(sessionId) ? sessionId : undefined
+  const local = project.changeSessions[changeName]
+  if (local !== undefined) {
+    const hit = tryBound(local)
+    if (hit !== undefined) return hit
+  }
+  // overview 快照里没有有效绑定：让宿主现场对账 + 读标记文件。
+  try {
+    const result = await call<{ sessionId: string | null }>('changeSession.get', { projectPath: project.path, changeName })
+    if (result.sessionId !== null) {
+      const hit = tryBound(result.sessionId)
+      if (hit !== undefined) return hit
+    }
+  } catch { /* 宿主查询失败，走兜底 */ }
+  return project.sessionIds[0]
+}
+
 // ── 总览页（渲染在侧栏浮层内） ─────────────────────────────────────────────
 
 function OverviewPage(props: { onBack: () => void }): React.ReactElement {
@@ -204,6 +280,41 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
     try { await call('remove', { path: dir }); reload() }
     catch (err) { setError(String((err as Error).message ?? err)) }
     finally { setBusy(false) }
+  }
+
+  /** 创建提案：为该项目新建 agent 会话并预填 /openspec-new-change。 */
+  const startNewChange = async (project: ProjectWire): Promise<void> => {
+    const ctx = pluginContext
+    if (ctx === undefined) return
+    setBusy(true); setError('')
+    try {
+      const before = new Set(project.sessionIds)
+      ctx.workspaces.startSession(project.workspaceId)
+      // 新会话经 wire 建立需要一点时间；轮询至多约 2 秒等 current
+      // 变成该项目下的一个新会话后再预填草稿。
+      let newSessionId: string | undefined
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        const current = ctx.sessions.list.getSnapshot().current
+        // current 变成不在旧会话集合里的会话 = 新会话已就绪。
+        if (current !== undefined && !before.has(current)) { newSessionId = current; break }
+      }
+      if (!prefillDraft('/openspec-new-change ')) {
+        setError('已新建会话，但未能预填命令（可手动输入 /openspec-new-change）')
+      }
+      // 记录提案 → 会话待绑定：此刻提案目录尚不存在（命令只是预填
+      // 草稿）。宿主记下点击时刻，之后对账时把 birthtime 晚于该时刻
+      // 的新提案目录绑给这个会话（写入提案目录内 .dsh-session 标记）。
+      if (newSessionId !== undefined) {
+        await call('changeSession.bind', {
+          projectPath: project.path,
+          sessionId: newSessionId,
+        }).catch(() => undefined)
+      }
+      setSuiteState({ pageOpen: false })
+    } finally {
+      setBusy(false)
+    }
   }
 
   // ── ＋ 导入流程（选文件夹 → 扫描并导入其下所有项目） ──
@@ -291,12 +402,21 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
           <div className="oss-project-list">
             {projects.length === 0 && <div className="oss-muted">还没有导入项目。</div>}
             {projects.map((project) => {
-              const active = project.changes.filter((c) => c.phase !== 'archived')
-              const archived = project.changes.filter((c) => c.phase === 'archived')
+              const active = project.changes.filter((c) => c.status !== 'archived')
+              const archived = project.changes.filter((c) => c.status === 'archived')
               return (
                 <div key={project.path} className="oss-card">
                   <div className="oss-row oss-project-head">
                     <span className="oss-h">{project.name}</span>
+                    <div className="oss-grow" />
+                    <button
+                      className="oss-btn oss-btn-mini"
+                      disabled={busy}
+                      title="新建会话并输入 /openspec-new-change"
+                      onClick={() => void startNewChange(project)}
+                    >
+                      创建提案
+                    </button>
                     <button className="oss-btn oss-btn-mini" onClick={() => void doRemove(project.path)} title="从工作区和列表同时移除">移除</button>
                   </div>
                   <div className="oss-muted oss-ellipsis">{project.path}</div>
@@ -306,20 +426,32 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
                     <ChangeRow
                       key={change.name}
                       change={change}
+                      project={project}
                       onOpenFile={(file, changeName) => {
-                        // 优先打开到 dsh-better-sidebar 编辑器；不可用时
-                        // 回退应用内预览浮层。
-                        if (!openInBetterSidebar(file.path, `${changeName}/${file.label}`)) {
-                          setPreview({ change: changeName, file, projectPath: project.path })
-                        }
+                        // 优先打开到 dsh-better-sidebar 编辑器（HTML 由本
+                        // 插件注册的高优先级预览器接管，走自己的 raw 路由，
+                        // 不受会话 cwd 栅栏限制）；不可用时回退应用内预览。
+                        if (openInBetterSidebar(file.path, `${changeName}/${file.label}`)) return
+                        setPreview({ change: changeName, file, projectPath: project.path })
                       }}
+                      onLocate={(changeName) => { void (async () => {
+                        const sessionId = await findChangeSession(project, changeName)
+                        if (sessionId === undefined) {
+                          setError(`找不到提案「${changeName}」对应的会话`)
+                          return
+                        }
+                        if (openSession(sessionId)) setSuiteState({ pageOpen: false })
+                        else setError('会话服务不可用，无法定位')
+                      })() }}
                     />
                   ))}
-                  {archived.length > 0 && <ArchivedSection changes={archived} onOpenFile={(file, changeName) => {
-                    if (!openInBetterSidebar(file.path, `${changeName}/${file.label}`)) {
-                      setPreview({ change: changeName, file, projectPath: project.path })
-                    }
-                  }} />}
+                  {archived.length > 0 && <ArchivedSection changes={archived} project={project} onOpenFile={(file, changeName) => {
+                    if (openInBetterSidebar(file.path, `${changeName}/${file.label}`)) return
+                    setPreview({ change: changeName, file, projectPath: project.path })
+                  }} onLocate={(changeName) => { void (async () => {
+                    const sessionId = await findChangeSession(project, changeName)
+                    if (sessionId !== undefined && openSession(sessionId)) setSuiteState({ pageOpen: false })
+                  })() }} />}
                 </div>
               )
             })}
@@ -412,11 +544,12 @@ function renderMarkdown(md: string): string {
   return out.join('')
 }
 
-/** 文件预览浮层：头部（返回 + 文件名 + 元信息）+ Markdown 内容区。 */
 /** 构造 iframe 用的原始文件 URL（需 projectPath 定位工作区）。 */
 function rawFileUrl(projectPath: string, filePath: string): string {
   const relPath = filePath.startsWith(`${projectPath}/`) ? filePath.slice(projectPath.length + 1) : filePath
-  return `/openspec/api/raw/${encodeURIComponent(btoa(projectPath))}/${relPath.split('/').map(encodeURIComponent).join('/')}`
+  // btoa 不接受非 Latin1 字符（中文项目路径）；先按 UTF-8 字节编码。
+  const wsId = btoa(String.fromCharCode(...new TextEncoder().encode(projectPath)))
+  return `/openspec/api/raw/${encodeURIComponent(wsId)}/${relPath.split('/').map(encodeURIComponent).join('/')}`
 }
 
 /** 是否用 iframe 预览（交互式 HTML 产物）。 */
@@ -475,17 +608,10 @@ interface ArtifactRow {
 /**
  * 把 change 的文件与 schema 期望产物合并成下拉行：按 schema 顺序
  * 排列每个产物阶段，已生成的展示其文件（一个阶段可能多个文件，
- * 如 specs/**），未生成的展示 ○ 占位行；schema 之外的文件（kind
- * 为 'file'）追加在最后。无 schema 时退化为纯文件列表。
+ * 如 specs/**），未生成的展示 ○ 占位行。
  */
 function buildArtifactRows(change: OpenSpecChangeWire): ArtifactRow[] {
   const rows: ArtifactRow[] = []
-  if (change.expected.length === 0) {
-    for (const file of change.files) {
-      rows.push({ key: file.path, file, label: file.label })
-    }
-    return rows
-  }
   for (const artifact of change.expected) {
     const matches = change.files.filter((file) => file.kind === artifact.id)
     if (matches.length > 0) {
@@ -496,21 +622,16 @@ function buildArtifactRows(change: OpenSpecChangeWire): ArtifactRow[] {
       rows.push({ key: `missing:${artifact.id}`, file: null, label: artifact.id })
     }
   }
-  for (const file of change.files.filter((f) => f.kind === 'file')) {
-    rows.push({ key: file.path, file, label: file.label })
-  }
   return rows
 }
 
-/** 阶段标签文案。 */
-function phaseLabel(change: OpenSpecChangeWire): string {
-  if (change.phase === 'archived') return change.archivedAt !== undefined ? `已归档 ${change.archivedAt}` : '已归档'
-  if (change.phase === 'applying') return '实施中'
-  return '提案阶段'
-}
-
 /** 已归档提案的折叠区（默认收起）。 */
-function ArchivedSection(props: { changes: OpenSpecChangeWire[]; onOpenFile: (file: OpenSpecArtifactFileWire, change: string) => void }): React.ReactElement {
+function ArchivedSection(props: {
+  changes: OpenSpecChangeWire[]
+  project: ProjectWire
+  onOpenFile: (file: OpenSpecArtifactFileWire, change: string) => void
+  onLocate: (change: string) => void
+}): React.ReactElement {
   const [open, setOpen] = React.useState(false)
   return (
     <div className="oss-archived">
@@ -527,20 +648,26 @@ function ArchivedSection(props: { changes: OpenSpecChangeWire[]; onOpenFile: (fi
         <span className="oss-muted" style={{ flex: 1, minWidth: 0 }}>已归档（{props.changes.length}）</span>
       </div>
       {open && props.changes.map((change) => (
-        <ChangeRow key={change.name} change={change} onOpenFile={props.onOpenFile} />
+        <ChangeRow key={change.name} change={change} project={props.project} onOpenFile={props.onOpenFile} onLocate={props.onLocate} />
       ))}
     </div>
   )
 }
 
-/** 单个 change 卡片行：阶段标签 + 可展开产物下拉列表。 */
-function ChangeRow(props: { change: OpenSpecChangeWire; onOpenFile: (file: OpenSpecArtifactFileWire, change: string) => void }): React.ReactElement {
+/** 单个 change 卡片行：定位会话 + 产物下拉；已归档提案保留归档日期。 */
+function ChangeRow(props: {
+  change: OpenSpecChangeWire
+  project: ProjectWire
+  onOpenFile: (file: OpenSpecArtifactFileWire, change: string) => void
+  onLocate: (change: string) => void
+}): React.ReactElement {
   const [expanded, setExpanded] = React.useState(false)
   const { change } = props
   const rows = buildArtifactRows(change)
   const hasContent = rows.length > 0
+  const archived = change.status === 'archived'
   return (
-    <div className={`oss-change ${change.phase === 'archived' ? 'is-archived' : ''}`}>
+    <div className={`oss-change ${archived ? 'is-archived' : ''}`}>
       <div
         className="oss-entry oss-entry-clickable"
         onClick={() => { if (hasContent) setExpanded((v) => !v) }}
@@ -548,15 +675,21 @@ function ChangeRow(props: { change: OpenSpecChangeWire; onOpenFile: (file: OpenS
         tabIndex={hasContent ? 0 : undefined}
         onKeyDown={(e) => { if (hasContent && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setExpanded((v) => !v) } }}
       >
-        <span className={change.tasks.total > 0 && change.tasks.done === change.tasks.total ? 'oss-dot is-done' : 'oss-dot is-doing'} />
         <span className={`oss-caret ${expanded ? 'is-open' : ''} ${hasContent ? '' : 'is-hidden'}`}>
           <IconChevronRightOutline12 size={12} />
         </span>
-        <span className="oss-ellipsis" style={{ flex: 1, minWidth: 0 }}>{change.name}</span>
-        {change.tasks.total > 0 && (
-          <span className="oss-muted oss-nowrap">{change.tasks.done}/{change.tasks.total}</span>
+        <span
+          className="oss-ellipsis oss-change-name"
+          style={{ flex: 1, minWidth: 0 }}
+          title="点击定位到该提案的会话"
+          onClick={(e) => { e.stopPropagation(); props.onLocate(change.name) }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); props.onLocate(change.name) } }}
+          role="button"
+          tabIndex={0}
+        >{change.name}</span>
+        {archived && change.archivedAt !== undefined && (
+          <span className="oss-muted oss-nowrap">{change.archivedAt}</span>
         )}
-        <span className={`oss-phase ${change.phase}`}>{phaseLabel(change)}</span>
       </div>
       {expanded && (
         <div className="oss-files">
@@ -651,7 +784,6 @@ interface SidebarInjection {
  */
 function injectSidebar(): SidebarInjection {
   let buttonHost: HTMLDivElement | null = null
-  let placedBeside: HTMLButtonElement | null = null
   let pageHost: HTMLDivElement | null = null
   let reactRoot: ReactDOMClient.Root | null = null
   let observer: MutationObserver | null = null
@@ -777,7 +909,6 @@ function injectSidebar(): SidebarInjection {
     if (!placed || buttonHost.previousElementSibling !== newSession) {
       sidebarRoot.insertBefore(buttonHost, newSession.nextSibling)
     }
-    placedBeside = newSession
 
     // 确保侧栏根节点成为页面浮层的定位上下文
     const root = sidebarRoot
@@ -830,18 +961,63 @@ function injectSidebar(): SidebarInjection {
       pageHost = null
       buttonHost?.remove()
       buttonHost = null
-      placedBeside = null
     },
   }
 }
 
-/** 插件入口：注册侧栏注入，随上下文销毁时清理。 */
+// ── better-sidebar 上的 OpenSpec HTML 预览器 ───────────────────────────────
+
+/**
+ * openspec 产物的 HTML 预览器组件：把绝对路径经宿主 raw.url 解析成
+ * 本插件自己的 /openspec/api/raw/ URL（栅栏是"已注册工作区的
+ * openspec/ 目录"，与当前会话 cwd 无关），在沙箱 iframe 中渲染。
+ * 这样 design.html 及其相对依赖（../../mermaid.min.js）始终可用，
+ * 不会触发 better-sidebar 内置 /sidebar/html 路由的会话 cwd 栅栏。
+ */
+function OpenSpecHtmlViewer(props: { path: string; title: string }): React.ReactElement | null {
+  const [url, setUrl] = React.useState('')
+  const [error, setError] = React.useState('')
+  React.useEffect(() => {
+    const controller = new AbortController()
+    setUrl(''); setError('')
+    call<{ url: string }>('raw.url', { path: props.path }, controller.signal)
+      .then((value) => setUrl(value.url))
+      .catch((err) => { if (err.name !== 'AbortError') setError(String((err as Error).message ?? err)) })
+    return () => controller.abort()
+  }, [props.path])
+  if (error !== '') return <div className="oss-err">{error}</div>
+  if (url === '') return <div className="oss-muted">加载中…</div>
+  return <iframe className="oss-preview-frame" src={url} title={props.title} sandbox="allow-scripts" />
+}
+
+/** 在 dsh-better-sidebar 上注册 OpenSpec HTML 预览器（优先级高于内置）。 */
+function registerSidebarViewers(ctx: Context): (() => void) | undefined {
+  const register = ctx.betterSidebar.registerFileViewer
+  if (register === undefined) return undefined
+  try {
+    return register({
+      id: 'openspec-suite:html',
+      title: 'OpenSpec HTML',
+      exts: ['html', 'htm'],
+      // 内置 html 预览器优先级为 0；这里以更高优先级接管 html 文件。
+      priority: 10,
+      fetchStrategy: 'none',
+      component: (props: { path: string; title: string }) => <OpenSpecHtmlViewer path={props.path} title={props.title} />,
+    })
+  } catch {
+    return undefined
+  }
+}
+
+/** 插件入口：注册侧栏注入与 HTML 预览器，随上下文销毁时清理。 */
 export function apply(ctx: Context): void {
   pluginContext = ctx
   ctx.effect(() => {
     const dispose = injectSidebar().destroy
+    const disposeViewer = registerSidebarViewers(ctx)
     return () => {
       pluginContext = undefined
+      disposeViewer?.()
       dispose()
     }
   })
