@@ -40,6 +40,42 @@ pnpm run typecheck
 
 进度解析直接读取 `openspec/` 目录结构，不依赖 openspec CLI。
 
+### 源码结构
+
+两端的实现按「领域逻辑 / 传输与 API / 组件 / 基础层」分类放在子文件夹中，入口文件只做装配：
+
+```
+src/
+├── index.ts                      # 宿主半入口（装配 + 导出公共 API）
+├── client.tsx                    # 客户端半入口（装配）
+├── host/                         # 宿主半
+│   ├── openspec/                 #   OpenSpec 领域逻辑
+│   │   ├── scan.ts               #     项目发现（目录扫描）
+│   │   ├── changes.ts            #     提案进度（状态/产物/任务解析）
+│   │   └── change-session-bindings.ts  # 提案 → 会话绑定（标记文件 + 对账）
+│   ├── api/                      #   HTTP API 层
+│   │   ├── routes.ts             #     路由注册与分发
+│   │   ├── handlers.ts           #     各 API 方法的业务实现
+│   │   └── wire.ts               #     传输层辅助（栅栏/信封/校验）
+│   └── prefs.ts                  #   设置命名空间与偏好读写
+└── client/                       # 客户端半
+    ├── core/                     #   基础层（非组件）
+    │   ├── api.ts / types.ts     #     宿主 API 封装与 wire 类型
+    │   ├── services.ts           #     跨插件服务适配（会话/草稿/better-sidebar）
+    │   ├── suite-state.ts        #     共享发布/订阅 store
+    │   ├── change-session.ts     #     提案 → 会话匹配
+    │   └── format.ts             #     展示工具（字节/时间/路径）
+    ├── components/               #   React 组件
+    │   ├── overview-page.tsx     #     总览页（项目列表/导入/创建提案）
+    │   ├── change-row.tsx        #     提案行与归档折叠区
+    │   ├── new-change-dialog.tsx #     创建提案弹窗
+    │   ├── dir-picker.tsx        #     应用内目录浏览器（降级方案）
+    │   ├── file-preview.tsx      #     Markdown/HTML 产物预览
+    │   ├── html-viewer.tsx       #     better-sidebar 上的 HTML 预览器
+    │   └── icons.tsx             #     图标组件
+    └── sidebar-injection.tsx     #   侧栏入口按钮 + 二级页面浮层注入
+```
+
 ## License
 
 MIT

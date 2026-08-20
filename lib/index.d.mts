@@ -16,11 +16,11 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 //#endregion
-//#region src/index.d.ts
-/** 插件标识，用于 cordis.yml 的行。 */
-declare const name = "dsh-openspec-suite";
-/** 挂载前需要的服务。 */
-declare const inject: string[];
+//#region src/host/openspec/scan.d.ts
+/**
+ * OpenSpec 项目发现：在给定根目录下递归找出所有含
+ * `openspec/changes/` 的项目目录。
+ */
 /** 一个被探测到的 OpenSpec 项目。 */
 interface OpenSpecProject {
   /** 项目根目录（绝对路径）。 */
@@ -35,6 +35,12 @@ interface OpenSpecProject {
  * `openspec/changes/` 的目录。
  */
 declare function scanOpenspecProjects(rootDir: string, signal?: AbortSignal, maxDepth?: number): Promise<OpenSpecProject[]>;
+//#endregion
+//#region src/host/openspec/changes.d.ts
+/**
+ * 提案进度：读取 openspec 项目的 changes/ 目录，按自定义 schema
+ * 汇总每个提案的生命周期状态、产物清单与任务勾选进度。
+ */
 /**
  * 提案生命周期状态：
  * - designing 方案设计中（schema 产物尚有缺口）
@@ -56,7 +62,7 @@ interface OpenSpecChange {
   };
   /** 产物文件清单（仅 schema.yaml 定义且已生成的产物），按 schema 顺序排列。 */
   files: OpenSpecArtifactFile[];
-  /** 本项目 schema.yaml 定义的期望产物，用于展示"缺失产物"。 */
+  /** 本项目 schema.yaml 定义的期望产物，用于展示“缺失产物”。 */
   expected: OpenSpecExpectedArtifact[];
   /** 归档时间（ISO 日期，从归档目录名 YYYY-MM-DD-<name> 解析；仅已归档）。 */
   archivedAt?: string;
@@ -83,10 +89,16 @@ interface OpenSpecArtifactFile {
 }
 /** 汇总一个 openspec 项目的所有 change（活跃 + 已归档）。 */
 declare function readProjectChanges(projectDir: string, signal?: AbortSignal): Promise<OpenSpecChange[]>;
+//#endregion
+//#region src/index.d.ts
+/** 插件标识，用于 cordis.yml 的行。 */
+declare const name = "dsh-openspec-suite";
+/** 挂载前需要的服务。 */
+declare const inject: string[];
 interface Config {
   scanDepth?: number;
 }
 declare const Config: z<Config>;
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { ChangeStatus, Config, OpenSpecArtifactFile, OpenSpecChange, OpenSpecExpectedArtifact, OpenSpecProject, apply, inject, name, readProjectChanges, scanOpenspecProjects };
+export { type ChangeStatus, Config, type OpenSpecArtifactFile, type OpenSpecChange, type OpenSpecExpectedArtifact, type OpenSpecProject, apply, inject, name, readProjectChanges, scanOpenspecProjects };
