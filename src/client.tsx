@@ -76,6 +76,27 @@ function prefillDraft(text: string): boolean {
 }
 
 /**
+ * 提交当前会话的 composer 草稿（等价于用户按下发送）。
+ * 会话必须已被 sessions.open 选中且草稿已预填。成功返回 true。
+ */
+function submitDraft(): boolean {
+  const ctx = pluginContext
+  if (ctx === undefined) return false
+  try {
+    const current = ctx.sessions.list.getSnapshot().current
+    if (current === undefined) return false
+    const scoped = ctx.sessions.scope(current)
+    if (scoped === undefined) return false
+    const conversation = ctx.get('conversation') as { input: { for(actx: unknown): { submit(): void } } } | undefined
+    if (conversation === undefined) return false
+    conversation.input.for(scoped).submit()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * 把文件打开到 dsh-better-sidebar 的编辑器 tab。成功打开返回
  * true；无活动会话或调用失败返回 false（调用方回退应用内预览）。
  */
@@ -194,6 +215,30 @@ function IconChevronRightOutline12(props: { size?: number }): React.ReactElement
   )
 }
 
+/** 刷新图标（环形箭头，14px 线性风格）。 */
+function IconRefreshOutline14(props: { size?: number; spinning?: boolean }): React.ReactElement {
+  const size = props.size ?? 14
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 14 14"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ display: 'block', flex: 'none', ...(props.spinning === true ? { animation: 'oss-spin 0.9s linear infinite' } : {}) }}
+    >
+      <path
+        d="M11.9 7A4.9 4.9 0 1 1 9.724 2.824"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        fill="none"
+      />
+      <path d="M9.4 0.9v2.5H11.9L9.4 0.9Z" fill="currentColor" />
+    </svg>
+  )
+}
+
 // ── 模块级共享状态（头部按钮与总览页共同驱动） ─────────────────────────────
 
 interface SuiteState {
@@ -262,6 +307,7 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
   const [projects, setProjects] = React.useState<ProjectWire[] | null>(null)
   const [error, setError] = React.useState('')
   const [busy, setBusy] = React.useState(false)
+  const [refreshing, setRefreshing] = React.useState(false)
 
   const reload = React.useCallback((signal?: AbortSignal) => {
     call<{ projects: ProjectWire[] }>('overview', {}, signal)
@@ -282,10 +328,15 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
     finally { setBusy(false) }
   }
 
-  /** 创建提案：为该项目新建 agent 会话并预填 /openspec-new-change。 */
-  const startNewChange = async (project: ProjectWire): Promise<void> => {
+  /** 创建提案：为该项目新建 agent 会话，预填并发送 /openspec-new-change + 描述。 */
+  const runNewChange = async (project: ProjectWire, description: string): Promise<void> => {
     const ctx = pluginContext
     if (ctx === undefined) return
+    // 描述必填：弹窗按钮已禁用，这里兜底拦截（如 Enter 直达）。
+    if (description.trim() === '') {
+      setError('提案描述不能为空')
+      return
+    }
     setBusy(true); setError('')
     try {
       const before = new Set(project.sessionIds)
@@ -299,18 +350,27 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
         // current 变成不在旧会话集合里的会话 = 新会话已就绪。
         if (current !== undefined && !before.has(current)) { newSessionId = current; break }
       }
-      if (!prefillDraft('/openspec-new-change ')) {
-        setError('已新建会话，但未能预填命令（可手动输入 /openspec-new-change）')
+      const line = description.trim() === '' ? '/openspec-new-change' : `/openspec-new-change ${description.trim()}`
+      if (!prefillDraft(line)) {
+        setError('已新建会话，但未能发送命令（可手动输入 /openspec-new-change）')
+        setNewChangeDialog(null)
+        return
       }
-      // 记录提案 → 会话待绑定：此刻提案目录尚不存在（命令只是预填
-      // 草稿）。宿主记下点击时刻，之后对账时把 birthtime 晚于该时刻
-      // 的新提案目录绑给这个会话（写入提案目录内 .dsh-session 标记）。
+      if (!submitDraft()) {
+        setError('草稿已填入但自动发送失败，请在会话中手动发送')
+        setNewChangeDialog(null)
+        return
+      }
+      // 记录提案 → 会话待绑定：宿主记下点击时刻，之后对账时把
+      // birthtime 晚于该时刻的新提案目录绑给这个会话（写入提案目录
+      // 内 .dsh-session 标记）。
       if (newSessionId !== undefined) {
         await call('changeSession.bind', {
           projectPath: project.path,
           sessionId: newSessionId,
         }).catch(() => undefined)
       }
+      setNewChangeDialog({ project, description, sent: true })
       setSuiteState({ pageOpen: false })
     } finally {
       setBusy(false)
@@ -321,6 +381,9 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
 
   const [picker, setPicker] = React.useState<PickerState>({ open: false, path: '', entries: [], error: '' })
   const [preview, setPreview] = React.useState<FilePreviewState | null>(null)
+
+  // ── 创建提案弹窗（输入描述 → 新建会话并自动发送） ──
+  const [newChangeDialog, setNewChangeDialog] = React.useState<{ project: ProjectWire; description: string; sent: boolean } | null>(null)
 
   const importAllUnder = async (dir: string): Promise<void> => {
     setBusy(true); setError('')
@@ -367,6 +430,16 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
         </button>
         <span className="oss-page-title">OpenSpec 项目总览</span>
         <div className="oss-grow" />
+        <button
+          className="oss-back-btn"
+          type="button"
+          title="刷新数据"
+          aria-label="刷新数据"
+          disabled={busy}
+          onClick={() => { setRefreshing(true); reload(); window.setTimeout(() => setRefreshing(false), 400) }}
+        >
+          <IconRefreshOutline14 size={14} spinning={refreshing} />
+        </button>
         <button className="oss-back-btn" type="button" title="选择文件夹导入" aria-label="选择文件夹导入" disabled={busy} onClick={() => void startImport()}>
           <span className="oss-plus-icon">＋</span>
         </button>
@@ -412,8 +485,8 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
                     <button
                       className="oss-btn oss-btn-mini"
                       disabled={busy}
-                      title="新建会话并输入 /openspec-new-change"
-                      onClick={() => void startNewChange(project)}
+                      title="输入描述后自动新建会话并创建提案"
+                      onClick={() => setNewChangeDialog({ project, description: '', sent: false })}
                     >
                       创建提案
                     </button>
@@ -463,6 +536,85 @@ function OverviewPage(props: { onBack: () => void }): React.ReactElement {
           <FilePreview state={preview} onBack={() => setPreview(null)} />
         </div>
       )}
+      {newChangeDialog !== null && (
+        <NewChangeDialog
+          dialog={newChangeDialog}
+          busy={busy}
+          onChange={(next) => setNewChangeDialog((d) => d === null ? d : { ...d, ...next })}
+          onClose={() => setNewChangeDialog(null)}
+          onSubmit={(description) => { void runNewChange(newChangeDialog.project, description) }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── 创建提案弹窗（输入描述 → 新建会话并自动发送命令） ────────────────────
+
+/**
+ * 创建提案弹窗：多行描述输入（必填），Enter 提交 / Shift+Enter 换行，
+ * 确认后由父组件新建会话并自动发送 /openspec-new-change + 描述。
+ */
+function NewChangeDialog(props: {
+  dialog: { project: ProjectWire; description: string; sent: boolean }
+  busy: boolean
+  onChange: (patch: Partial<{ description: string; sent: boolean }>) => void
+  onClose: () => void
+  onSubmit: (description: string) => void
+}): React.ReactElement {
+  const { dialog, busy } = props
+  const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
+
+  React.useEffect(() => { inputRef.current?.focus() }, [dialog.sent])
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !busy) {
+      e.preventDefault()
+      props.onSubmit(dialog.description)
+    }
+  }
+
+  const canSubmit = !busy && dialog.description.trim() !== ''
+
+  if (dialog.sent) {
+    return (
+      <div className="oss-modal-overlay" onClick={props.onClose}>
+        <div className="oss-modal oss-modal-success" role="dialog" aria-label="提案创建成功" onClick={(e) => e.stopPropagation()}>
+          <div className="oss-modal-success-icon">✓</div>
+          <div className="oss-modal-title">提案创建成功</div>
+          <div className="oss-muted oss-modal-desc">
+            已在「{dialog.project.name}」下新建会话并发送 /openspec-new-change，正在生成提案…
+          </div>
+          <button className="oss-btn-primary" onClick={props.onClose}>知道了</button>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="oss-modal-overlay" onClick={busy ? undefined : props.onClose}>
+      <div className="oss-modal" role="dialog" aria-label="创建提案" onClick={(e) => e.stopPropagation()}>
+        <div className="oss-modal-title">创建提案</div>
+        <div className="oss-muted oss-modal-desc">
+          将在「{dialog.project.name}」下新建会话，自动发送 /openspec-new-change 与你的描述。
+        </div>
+        <textarea
+          ref={inputRef}
+          className="oss-modal-textarea"
+          rows={4}
+          value={dialog.description}
+          placeholder="提案描述（必填）"
+          disabled={busy}
+          onChange={(e) => props.onChange({ description: e.target.value })}
+          onKeyDown={handleKeyDown}
+        />
+        <div className="oss-row oss-modal-actions">
+          <div className="oss-grow" />
+          <button className="oss-btn" disabled={busy} onClick={props.onClose}>取消</button>
+          <button className="oss-btn-primary" disabled={!canSubmit} onClick={() => props.onSubmit(dialog.description)}>
+            {busy ? '创建中…' : '创建'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

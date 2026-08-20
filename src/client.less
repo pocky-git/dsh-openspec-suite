@@ -157,6 +157,88 @@
   line-height: 14px;
 }
 
+// ── 创建提案弹窗 ──────────────────────────────────────────────────────────
+
+.oss-modal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.oss-modal {
+  width: min(360px, 86%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-canvas, #fff));
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  box-sizing: border-box;
+}
+
+.oss-modal-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.oss-modal-desc {
+  line-height: 1.5;
+}
+
+.oss-modal-textarea {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 72px;
+  box-sizing: border-box;
+  outline: none;
+
+  &:focus-visible {
+    border-color: var(--dsw-alias-state-business-primary, #4d6bfe);
+  }
+}
+
+.oss-modal-actions {
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.oss-modal-success {
+  align-items: center;
+  text-align: center;
+}
+
+.oss-modal-success-icon {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 18px;
+  color: #fff;
+  background: #30a46c;
+}
+
+@keyframes oss-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 // ── 目录选择器（应用内浏览降级方案） ──────────────────────────────────────
 
 .oss-picker {
