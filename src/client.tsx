@@ -1038,9 +1038,18 @@ function injectSidebar(): SidebarInjection {
 
     // 宽/窄（rail）模式判定：直接以侧栏根容器的渲染宽度为准。
     // 展开约 280px；收起（rail）后收缩为图标列（远小于 120px）。
+    const prevWidth = sidebarWidthRef
     const sidebarWidth = sidebarRoot.getBoundingClientRect().width
     sidebarWidthRef = sidebarWidth
     const wide = sidebarWidth > 120
+
+    // 侧栏收起（宽 → rail）时自动关闭总览页：浮层依附于展开态的侧栏
+    // DOM，收起后没有可用的展示空间。以“上一帧还是宽模式”为条件，
+    // 避免“收起态点击入口 → 先展开再打开”流程中被展开动画初期的
+    // 窄宽度误关闭。
+    if (!wide && prevWidth > 120 && suiteState.pageOpen) {
+      setSuiteState({ pageOpen: false })
+    }
 
     const placed = buttonHost !== null && buttonHost.parentElement === sidebarRoot && buttonHost.isConnected
     if (buttonHost === null) {
